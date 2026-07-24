@@ -23,6 +23,7 @@ use Config\Services;
 class Secure_Controller extends BaseController
 {
     public array $global_view_data;
+    protected ?string $accountScope = null;
     protected Employee $employee;
     protected Module $module;
     protected Session $session;
@@ -45,6 +46,7 @@ class Secure_Controller extends BaseController
         }
 
         $logged_in_employee_info = $this->employee->get_logged_in_employee_info();
+        $this->accountScope = $logged_in_employee_info->account_scope ?? null;
         if (
             !$this->employee->has_module_grant($module_id, $logged_in_employee_info->person_id)
             || (isset($submodule_id) && !$this->employee->has_module_grant($submodule_id, $logged_in_employee_info->person_id))
@@ -72,10 +74,16 @@ class Secure_Controller extends BaseController
 
         $this->global_view_data += [
             'user_info'       => $logged_in_employee_info,
+            'account_scope'   => $this->accountScope,
             'controller_name' => $module_id,
             'config'          => $config
         ];
         view('viewData', $this->global_view_data);
+    }
+
+    protected function getAccountScope(): ?string
+    {
+        return $this->accountScope;
     }
 
     public function sanitizeSortColumn($headers, $field, $default): string

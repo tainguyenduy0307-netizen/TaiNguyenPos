@@ -118,12 +118,29 @@ class Employees extends Persons
     {
         $current_user = $this->employee->get_logged_in_employee_info();
 
+        if ($employee_id == NEW_ENTRY) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => lang('Employees.fixed_accounts_only'),
+                'id'      => NEW_ENTRY
+            ]);
+        }
+
         if ($employee_id != NEW_ENTRY) {
             $target_employee = $this->employee->get_info($employee_id);
             if (!$this->employee->canModifyEmployee($target_employee->person_id, $current_user->person_id)) {
                 return $this->response->setJSON([
                     'success' => false,
                     'message' => lang('Employees.error_updating_admin'),
+                    'id'      => NEW_ENTRY
+                ]);
+            }
+
+            $requested_username = $this->request->getPost('username', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
+            if ($this->employee->isFixedAccount($employee_id) && $requested_username !== $target_employee->username) {
+                return $this->response->setJSON([
+                    'success' => false,
+                    'message' => lang('Employees.fixed_username_locked'),
                     'id'      => NEW_ENTRY
                 ]);
             }
@@ -171,6 +188,14 @@ class Employees extends Persons
 
         // Password has been changed OR first time password set
         if (!empty($this->request->getPost('password')) && ENVIRONMENT != 'testing') {
+            if ((int)$employee_id !== (int)$current_user->person_id) {
+                return $this->response->setJSON([
+                    'success' => false,
+                    'message' => lang('Employees.only_own_password_change'),
+                    'id'      => NEW_ENTRY
+                ]);
+            }
+
             $exploded = explode(":", $this->request->getPost('language', FILTER_SANITIZE_FULL_SPECIAL_CHARS));
             $employee_data = [
                 'username'      => $this->request->getPost('username', FILTER_SANITIZE_FULL_SPECIAL_CHARS),
@@ -225,6 +250,12 @@ class Employees extends Persons
     {
         $employees_to_delete = $this->request->getPost('ids', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
         $current_user = $this->employee->get_logged_in_employee_info();
+
+        foreach ($employees_to_delete as $emp_id) {
+            if ($this->employee->isFixedAccount((int)$emp_id)) {
+                return $this->response->setJSON(['success' => false, 'message' => lang('Employees.fixed_account_cannot_delete')]);
+            }
+        }
 
         if (!$this->employee->isAdmin($current_user->person_id)) {
             foreach ($employees_to_delete as $emp_id) {

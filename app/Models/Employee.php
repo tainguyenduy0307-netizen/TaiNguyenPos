@@ -14,6 +14,16 @@ use stdClass;
  */
 class Employee extends Person
 {
+    public const ACCOUNT_SCOPE_DAY = 'DAY';
+    public const ACCOUNT_SCOPE_NIGHT = 'NIGHT';
+    public const ACCOUNT_SCOPE_AGGREGATE = 'AGGREGATE';
+
+    private const FIXED_ACCOUNT_USERNAMES = [
+        'NguyenDuyTai',
+        'NguyenDuyTai1',
+        'NguyenDuyTai2',
+    ];
+
     public Session $session;
     protected $table = 'Employees';
     protected $primaryKey = 'person_id';
@@ -24,8 +34,10 @@ class Employee extends Person
         'password',
         'deleted',
         'hashversion',
+        'hash_version',
         'language',
-        'language_code'
+        'language_code',
+        'account_scope'
     ];
 
     public function __construct()
@@ -112,6 +124,25 @@ class Employee extends Person
         return $person_obj;
     }
 
+    public function isFixedAccountUsername(?string $username): bool
+    {
+        return $username !== null && in_array($username, self::FIXED_ACCOUNT_USERNAMES, true);
+    }
+
+    public function isFixedAccount(int $person_id): bool
+    {
+        $employee = $this->get_info($person_id);
+
+        return $this->isFixedAccountUsername($employee->username ?? null);
+    }
+
+    public function get_logged_in_account_scope(): ?string
+    {
+        $employee = $this->get_logged_in_employee_info();
+
+        return is_object($employee) ? ($employee->account_scope ?? null) : null;
+    }
+
     /**
      * Gets information about multiple employees
      */
@@ -131,6 +162,16 @@ class Employee extends Person
     public function save_employee(array &$person_data, array &$employee_data, array &$grants_data, int $employee_id = NEW_ENTRY): bool
     {
         $success = false;
+        unset($employee_data['account_scope']);
+
+        if ($employee_id != NEW_ENTRY && $this->isFixedAccount($employee_id)) {
+            $current_employee = $this->get_info($employee_id);
+            if (isset($employee_data['username']) && $employee_data['username'] !== $current_employee->username) {
+                return false;
+            }
+
+            $employee_data['username'] = $current_employee->username;
+        }
 
         // Run these queries as a transaction, we want to make sure we do all or nothing
         $this->db->transStart();
@@ -186,6 +227,10 @@ class Employee extends Person
             return false;
         }
 
+        if ($this->isFixedAccount((int) $employee_id)) {
+            return false;
+        }
+
         // Run these queries as a transaction, we want to make sure we do all or nothing
         $this->db->transStart();
 
@@ -213,6 +258,12 @@ class Employee extends Person
         // Don't let employees delete themselves
         if (in_array($this->get_logged_in_employee_info()->person_id, $person_ids)) {
             return false;
+        }
+
+        foreach ($person_ids as $person_id) {
+            if ($this->isFixedAccount((int) $person_id)) {
+                return false;
+            }
         }
 
         // Run these queries as a transaction, we want to make sure we do all or nothing
@@ -520,6 +571,17 @@ class Employee extends Person
     public function change_password(array $employee_data, $employee_id = false): bool
     {
         $success = false;
+        $logged_in_employee = $this->get_logged_in_employee_info();
+
+        if (!is_object($logged_in_employee) || (int)$employee_id !== (int)$logged_in_employee->person_id) {
+            return false;
+        }
+
+        unset($employee_data['account_scope']);
+
+        if ($this->isFixedAccount((int)$employee_id)) {
+            unset($employee_data['username']);
+        }
 
         if (!getenv('DISALLOW_PASSWORD_CHANGE')) {
             $this->db->transStart();

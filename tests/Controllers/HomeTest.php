@@ -382,11 +382,11 @@ class HomeTest extends CIUnitTestCase
     }
     
     /**
-     * Test admin can change any user's password
-     * 
+     * Test admin cannot change another user's password.
+     *
      * @return void
      */
-    public function testAdminCanChangeAnyPassword(): void
+    public function testAdminCannotChangeAnotherUsersPassword(): void
     {
         $nonAdminId = $this->createNonAdminEmployee();
         $this->resetSession(); // Login as admin
@@ -399,12 +399,12 @@ class HomeTest extends CIUnitTestCase
         
         $response->assertStatus(200);
         $result = json_decode($response->getJSON(), true);
-        $this->assertTrue($result['success']);
+        $this->assertFalse($result['success']);
         
-        // Verify password was changed
+        // Verify password was not changed
         $employee = model(Employee::class);
         $user = $employee->get_info($nonAdminId);
-        $this->assertTrue(password_verify('adminset123', $user->password));
+        $this->assertTrue(password_verify('password123', $user->password));
     }
     
     /**
