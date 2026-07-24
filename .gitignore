@@ -88,3 +88,9 @@ auth.json
 /app/Database/database.sql
 /writable/cache/settings
 /.env.bak
+# Gia Phu POS project documentation and approved reference data
+!docs/
+!docs/spec/
+!docs/spec/POS_REQUIREMENTS.md
+!docs/reference-data/
+!docs/reference-data/Danh_muc_san_pham_POS.xlsx
