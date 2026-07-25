@@ -24,6 +24,7 @@ use CodeIgniter\HTTP\ResponseInterface;
 use Config\Services;
 use Config\OSPOS;
 use ReflectionException;
+use RuntimeException;
 use stdClass;
 
 class Sales extends Secure_Controller
@@ -68,6 +69,7 @@ class Sales extends Secure_Controller
 
     public function getIndex(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $this->session->set('allow_temp_items', 1);
         return $this->reload();
     }
@@ -80,6 +82,7 @@ class Sales extends Secure_Controller
      */
     public function getManage(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $personId = $this->session->get('person_id');
 
         if (!$this->employee->has_grant('reports_sales', $personId)) {
@@ -130,6 +133,10 @@ class Sales extends Secure_Controller
      */
     public function getRow(int $row_id): ResponseInterface
     {
+        if (!$this->sale->is_owned_by_current_business_unit($row_id)) {
+            return $this->response->setJSON(['success' => false, 'message' => lang('Sales.not_authorized')]);
+        }
+
         $sale_info = $this->sale->get_info($row_id)->getRow();
         $data_row = get_sale_data_row($sale_info);
 
@@ -141,6 +148,7 @@ class Sales extends Secure_Controller
      */
     public function getSearch(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $search = $this->request->getGet('search', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
         $limit = $this->request->getGet('limit', FILTER_SANITIZE_NUMBER_INT);
         $offset = $this->request->getGet('offset', FILTER_SANITIZE_NUMBER_INT);
@@ -193,6 +201,7 @@ class Sales extends Secure_Controller
      */
     public function getItemSearch(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $suggestions = [];
         $receipt = $search = $this->request->getGet('term') != ''
             ? $this->request->getGet('term')
@@ -213,6 +222,7 @@ class Sales extends Secure_Controller
      */
     public function suggest_search(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $search = $this->request->getPost('term') != ''
             ? $this->request->getPost('term')
             : null;
@@ -230,6 +240,7 @@ class Sales extends Secure_Controller
      */
     public function postSelectCustomer(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $customer_id = (int)$this->request->getPost('customer', FILTER_SANITIZE_NUMBER_INT);
         if ($this->customer->exists($customer_id)) {
             $this->sale_lib->set_customer($customer_id);
@@ -253,6 +264,7 @@ class Sales extends Secure_Controller
      */
     public function postChangeMode(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $mode = $this->request->getPost('mode', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
         $this->sale_lib->set_mode($mode);
 
@@ -301,6 +313,7 @@ class Sales extends Secure_Controller
      */
     public function change_register_mode(int $sale_type): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $mode = match ($sale_type) {
             SALE_TYPE_QUOTE => 'sale_quote',
             SALE_TYPE_WORK_ORDER => 'sale_work_order',
@@ -322,6 +335,7 @@ class Sales extends Secure_Controller
      */
     public function postSetComment(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $this->sale_lib->set_comment($this->request->getPost('comment', FILTER_SANITIZE_FULL_SPECIAL_CHARS));
         return $this->response->setJSON(['success' => true]);
     }
@@ -334,6 +348,7 @@ class Sales extends Secure_Controller
      */
     public function postSetInvoiceNumber(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $this->sale_lib->set_invoice_number($this->request->getPost('sales_invoice_number', FILTER_SANITIZE_NUMBER_INT));
         return $this->response->setJSON(['success' => true]);
     }
@@ -343,6 +358,7 @@ class Sales extends Secure_Controller
      */
     public function postSetPaymentType(): ResponseInterface|string    // TODO: This function does not appear to be called anywhere in the code.
     {
+        $this->requireCurrentBusinessUnitId();
         $this->sale_lib->set_payment_type($this->request->getPost('selected_payment_type', FILTER_SANITIZE_FULL_SPECIAL_CHARS));
         return $this->reload();
     }
@@ -355,6 +371,7 @@ class Sales extends Secure_Controller
      */
     public function postSetPrintAfterSale(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $this->sale_lib->set_print_after_sale($this->request->getPost('sales_print_after_sale') != 'false');
         return $this->response->setJSON(['success' => true]);
     }
@@ -367,6 +384,7 @@ class Sales extends Secure_Controller
      */
     public function postSetPriceWorkOrders(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $price_work_orders = parse_decimals($this->request->getPost('price_work_orders'));
         $this->sale_lib->set_price_work_orders($price_work_orders);
         return $this->response->setJSON(['success' => true]);
@@ -380,6 +398,7 @@ class Sales extends Secure_Controller
      */
     public function postSetEmailReceipt(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $this->sale_lib->set_email_receipt($this->request->getPost('email_receipt', FILTER_SANITIZE_FULL_SPECIAL_CHARS));
         return $this->response->setJSON(['success' => true]);
     }
@@ -392,6 +411,7 @@ class Sales extends Secure_Controller
      */
     public function postAddPayment(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $data = [];
         $giftcard = model(Giftcard::class);
         $paymentType = $this->request->getPost('payment_type', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
@@ -505,6 +525,7 @@ class Sales extends Secure_Controller
      */
     public function getDeletePayment(string $payment_id): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         helper('url');
 
         $this->sale_lib->delete_payment(base64url_decode($payment_id));
@@ -520,6 +541,7 @@ class Sales extends Secure_Controller
      */
     public function postAdd(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $data = [];
 
         $discount = $this->config['default_sales_discount'];
@@ -601,6 +623,7 @@ class Sales extends Secure_Controller
      */
     public function postEditItem(string $line): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $data = [];
 
         $rules = [
@@ -675,6 +698,7 @@ class Sales extends Secure_Controller
      */
     public function getDeleteItem(int $item_id): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $this->sale_lib->delete_item($item_id);
 
         $this->sale_lib->empty_payments();
@@ -690,6 +714,7 @@ class Sales extends Secure_Controller
      */
     public function getRemoveCustomer(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $this->sale_lib->clear_giftcard_remainder();
         $this->sale_lib->clear_rewards_remainder();
         $this->sale_lib->delete_payment(lang('Sales.rewards'));
@@ -709,6 +734,7 @@ class Sales extends Secure_Controller
      */
     public function postComplete(): string    // TODO: this function is huge.  Probably should be refactored.
     {
+        $this->requireCurrentBusinessUnitId();
         $sale_id = $this->sale_lib->get_sale_id();
         $data = [];
         $data['dinner_table'] = $this->sale_lib->get_dinner_table();
@@ -951,6 +977,7 @@ class Sales extends Secure_Controller
      */
     public function getSendPdf(int $sale_id, string $type = 'invoice'): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $sale_data = $this->_load_sale_data($sale_id);
 
         $result = false;
@@ -1001,6 +1028,7 @@ class Sales extends Secure_Controller
      */
     public function getSendReceipt(int $sale_id): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $sale_data = $this->_load_sale_data($sale_id);
 
         $result = false;
@@ -1100,6 +1128,10 @@ class Sales extends Secure_Controller
      */
     private function _load_sale_data($sale_id): array    // TODO: Hungarian notation
     {
+        if (!$this->sale->is_owned_by_current_business_unit((int) $sale_id)) {
+            throw new RuntimeException('Sale is not available for the current business unit.');
+        }
+
         $this->sale_lib->clear_all();
         $cash_rounding = $this->sale_lib->reset_cash_rounding();
         $data['cash_rounding'] = $cash_rounding;
@@ -1325,6 +1357,7 @@ class Sales extends Secure_Controller
      */
     public function getReceipt(int $sale_id): string
     {
+        $this->requireCurrentBusinessUnitId();
         $data = $this->_load_sale_data($sale_id);
         $this->sale_lib->clear_all();
 
@@ -1340,6 +1373,7 @@ class Sales extends Secure_Controller
      */
     public function getInvoice(int $sale_id): string
     {
+        $this->requireCurrentBusinessUnitId();
         $data = $this->_load_sale_data($sale_id);
         $this->sale_lib->clear_all();
 
@@ -1355,6 +1389,10 @@ class Sales extends Secure_Controller
      */
     public function getEdit(int $sale_id): string
     {
+        if (!$this->sale->is_owned_by_current_business_unit($sale_id)) {
+            throw new RuntimeException('Sale is not available for the current business unit.');
+        }
+
         $data = [];
 
         $sale_info = $this->sale->get_info($sale_id)->getRowArray();
@@ -1409,6 +1447,7 @@ class Sales extends Secure_Controller
      */
     public function postDelete(int $sale_id = NEW_ENTRY, bool $update_inventory = true): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $employee_id = $this->employee->get_logged_in_employee_info()->person_id;
         $has_grant = $this->employee->has_grant('sales_delete', $employee_id);
 
@@ -1436,6 +1475,7 @@ class Sales extends Secure_Controller
      */
     public function restore(int $sale_id = NEW_ENTRY, bool $update_inventory = true): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $employee_id = $this->employee->get_logged_in_employee_info()->person_id;
         $has_grant = $this->employee->has_grant('sales_delete', $employee_id);
 
@@ -1465,6 +1505,12 @@ class Sales extends Secure_Controller
      */
     public function postSave(int $sale_id = NEW_ENTRY): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
+        if (!$this->sale->is_owned_by_current_business_unit($sale_id)) {
+            return $this->response->setJSON(['success' => false, 'message' => lang('Sales.not_authorized'), 'id' => $sale_id]);
+        }
+
         $newdate = $this->request->getPost('date', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
         $employee_id = $this->employee->get_logged_in_employee_info()->person_id;
         $inventory = model(Inventory::class);
@@ -1590,8 +1636,14 @@ class Sales extends Secure_Controller
      */
     public function postCancel(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $sale_id = $this->sale_lib->get_sale_id();
         if ($sale_id != NEW_ENTRY && $sale_id != '') {
+            if (!$this->sale->is_owned_by_current_business_unit((int) $sale_id)) {
+                $this->sale_lib->clear_all();
+                return $this->reload(['error' => lang('Sales.not_authorized')]);
+            }
+
             $sale_type = $this->sale_lib->get_sale_type();
 
             if ($this->config['dinner_table_enable']) {
@@ -1621,7 +1673,14 @@ class Sales extends Secure_Controller
      */
     public function getDiscardSuspendedSale(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $suspended_id = $this->sale_lib->get_suspended_id();
+
+        if (!$this->sale->is_owned_by_current_business_unit($suspended_id)) {
+            $this->sale_lib->clear_all();
+            return $this->reload(['error' => lang('Sales.not_authorized')]);
+        }
+
         $this->sale_lib->clear_all();
         $this->sale->delete_suspended_sale($suspended_id);
         return $this->reload();
@@ -1637,6 +1696,7 @@ class Sales extends Secure_Controller
      */
     public function postSuspend(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $sale_id = $this->sale_lib->get_sale_id();
         $dinner_table = $this->sale_lib->get_dinner_table();
         $cart = $this->sale_lib->get_cart();
@@ -1675,6 +1735,7 @@ class Sales extends Secure_Controller
      */
     public function getSuspended(): string
     {
+        $this->requireCurrentBusinessUnitId();
         $data = [];
         $customer_id = $this->sale_lib->get_customer();
         $data['suspended_sales'] = $this->sale->get_all_suspended($customer_id);
@@ -1690,10 +1751,15 @@ class Sales extends Secure_Controller
      */
     public function postUnsuspend(): ResponseInterface|string
     {
+        $this->requireCurrentBusinessUnitId();
         $sale_id = $this->request->getPost('suspended_sale_id', FILTER_SANITIZE_NUMBER_INT);
         $this->sale_lib->clear_all();
 
         if ($sale_id > 0) {
+            if (!$this->sale->is_owned_by_current_business_unit((int) $sale_id)) {
+                return $this->reload(['error' => lang('Sales.not_authorized')]);
+            }
+
             $this->sale_lib->copy_entire_sale($sale_id);
         }
 
@@ -1711,6 +1777,7 @@ class Sales extends Secure_Controller
      */
     public function getSalesKeyboardHelp(): string
     {
+        $this->requireCurrentBusinessUnitId();
         return view('sales/help', [
             'keyboardShortcuts' => $this->sale_lib->getKeyShortcuts()
         ]);
@@ -1724,10 +1791,16 @@ class Sales extends Secure_Controller
      */
     public function postCheckInvoiceNumber(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $sale_id = $this->request->getPost('sale_id', FILTER_SANITIZE_NUMBER_INT);
         $invoice_number = $this->request->getPost('invoice_number', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
         $exists = !empty($invoice_number) && $this->sale->check_invoice_number_exists($invoice_number, $sale_id);
         return $this->response->setJSON(!$exists ? 'true' : 'false');
+    }
+
+    private function requireCurrentBusinessUnitId(): int
+    {
+        return Services::businessUnit()->requireCurrentBusinessUnitId();
     }
 
     /**
@@ -1759,6 +1832,7 @@ class Sales extends Secure_Controller
      */
     public function postChangeItemNumber(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $item_id = $this->request->getPost('item_id', FILTER_SANITIZE_NUMBER_INT);
         $item_number = $this->request->getPost('item_number', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
         $this->item->update_item_number($item_id, $item_number);
@@ -1779,6 +1853,7 @@ class Sales extends Secure_Controller
      */
     public function postChangeItemName(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $item_id = $this->request->getPost('item_id', FILTER_SANITIZE_NUMBER_INT);
         $name = $this->request->getPost('item_name', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
 
@@ -1803,6 +1878,7 @@ class Sales extends Secure_Controller
      */
     public function postChangeItemDescription(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
         $item_id = $this->request->getPost('item_id', FILTER_SANITIZE_NUMBER_INT);
         $description = $this->request->getPost('item_description', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
 

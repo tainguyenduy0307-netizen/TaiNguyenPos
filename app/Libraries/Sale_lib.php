@@ -1313,6 +1313,10 @@ class Sale_lib
         $pieces = explode(' ', $receipt_sale_id);
         $sale_id = $pieces[1];
 
+        if (!$this->sale->is_owned_by_current_business_unit((int) $sale_id)) {
+            return;
+        }
+
         $this->empty_cart();
         $this->remove_customer();
 
@@ -1358,6 +1362,10 @@ class Sale_lib
      */
     public function copy_entire_sale(int $sale_id): void
     {
+        if (!$this->sale->is_owned_by_current_business_unit($sale_id)) {
+            return;
+        }
+
         $this->empty_cart();
         $this->remove_customer();
 

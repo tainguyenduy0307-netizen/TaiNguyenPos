@@ -7,6 +7,7 @@ use CodeIgniter\Database\ResultInterface;
 use CodeIgniter\Model;
 use App\Libraries\Sale_lib;
 use Config\OSPOS;
+use Config\Services;
 use ReflectionException;
 
 /**
@@ -22,6 +23,7 @@ class Sale extends Model
         'sale_time',
         'customer_id',
         'employee_id',
+        'business_unit_id',
         'comment',
         'quote_number',
         'sale_status',
@@ -42,8 +44,9 @@ class Sale extends Model
      */
     public function get_info(int $sale_id): ResultInterface
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $config = config(OSPOS::class)->settings;
-        $this->create_temp_table(['sale_id' => $sale_id]);
+        $this->create_temp_table(['sale_id' => $sale_id, 'business_unit_id' => $businessUnitId]);
 
         $decimals = totals_decimals();
         $sales_tax = 'IFNULL(SUM(sales_items_taxes.sales_tax), 0)';
@@ -64,6 +67,7 @@ class Sale extends Model
                 MAX(sales.invoice_number) AS invoice_number,
                 MAX(sales.quote_number) AS quote_number,
                 MAX(sales.employee_id) AS employee_id,
+                MAX(sales.business_unit_id) AS business_unit_id,
                 MAX(sales.customer_id) AS customer_id,
                 MAX(CONCAT(customer_p.first_name, " ", customer_p.last_name)) AS customer_name,
                 MAX(customer_p.first_name) AS first_name,
@@ -94,6 +98,7 @@ class Sale extends Model
         );
 
         $builder->where('sales.sale_id', $sale_id);
+        $builder->where('sales.business_unit_id', $businessUnitId);
 
         $builder->groupBy('sales.sale_id, payments.reference_code');
         $builder->orderBy('sales.sale_time', 'asc');
@@ -114,6 +119,8 @@ class Sale extends Model
      */
     public function search(?string $search, array $filters, ?int $rows = 0, ?int $limit_from = 0, ?string $sort = 'sales.sale_time', ?string $order = 'desc', ?bool $count_only = false)
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+
         // Set default values
         if ($rows == null) $rows = 0;
         if ($limit_from == null) $limit_from = 0;
@@ -126,7 +133,7 @@ class Sale extends Model
         $decimals = totals_decimals();
 
         // Only non-suspended records
-        $where = 'sales.sale_status = 0 AND ';
+        $where = 'sales.business_unit_id = ' . $this->db->escape($businessUnitId) . ' AND sales.sale_status = 0 AND ';
         $where .= empty($config['date_or_time_format'])
             ? 'DATE(' . $db_prefix . 'sales.sale_time) BETWEEN ' . $this->db->escape($filters['start_date']) . ' AND ' . $this->db->escape($filters['end_date'])
             : 'sales.sale_time BETWEEN ' . $this->db->escape(rawurldecode($filters['start_date'])) . ' AND ' . $this->db->escape(rawurldecode($filters['end_date']));
@@ -212,6 +219,7 @@ class Sale extends Model
      */
     public function get_payments_summary(?string $search, array $filters): array
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $config = config(OSPOS::class)->settings;
 
         // Get payment summary
@@ -220,6 +228,7 @@ class Sale extends Model
         $builder->join('sales_payments', 'sales_payments.sale_id = sales.sale_id');
         $builder->join('people AS customer_p', 'sales.customer_id = customer_p.person_id', 'LEFT');
         $builder->join('customers AS customer', 'sales.customer_id = customer.person_id', 'LEFT');
+        $builder->where('sales.business_unit_id', $businessUnitId);
 
         // TODO: This needs to be replaced with Ternary notation
         if (empty($config['date_or_time_format'])) {    // TODO: duplicated code.  We should think about refactoring out a method.
@@ -329,16 +338,20 @@ class Sale extends Model
      */
     public function get_search_suggestions(?string $search, int $limit = 25): array    // TODO: $limit is never used.
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $suggestions = [];
 
         if (!$this->isValidReceipt($search)) {
             $builder = $this->db->table('sales');
             $builder->distinct()->select('first_name, last_name');
             $builder->join('people', 'people.person_id = sales.customer_id');
+            $builder->where('sales.business_unit_id', $businessUnitId);
+            $builder->groupStart();
             $builder->like('last_name', $search);
             $builder->orLike('first_name', $search);
             $builder->orLike('CONCAT(first_name, " ", last_name)', $search);
             $builder->orLike('company_name', $search);
+            $builder->groupEnd();
             $builder->orderBy('last_name', 'asc');
 
             foreach ($builder->get()->getResultArray() as $result) {
@@ -369,6 +382,7 @@ class Sale extends Model
     {
         $builder = $this->db->table('sales');
         $builder->where('invoice_number', $invoice_number);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
         return $builder->get();
     }
@@ -443,6 +457,7 @@ class Sale extends Model
     {
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
         return ($builder->get()->getNumRows() == 1);    // TODO: ===
     }
@@ -452,10 +467,17 @@ class Sale extends Model
      */
     public function update($sale_id = null, $sale_data = null): bool
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+
+        if (!$this->saleBelongsToBusinessUnit((int) $sale_id, $businessUnitId)) {
+            return false;
+        }
+
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $businessUnitId);
         $update_data = $sale_data;
-        unset($update_data['payments']);
+        unset($update_data['payments'], $update_data['business_unit_id']);
         $success = $builder->update($update_data);
 
         // Touch payment only if update sale is successful and there is a payments object otherwise the result would be to delete all the payments associated to the sale
@@ -496,11 +518,14 @@ class Sale extends Model
                             'cash_adjustment' => $cash_adjustment
                         ];
 
+                        $builder->where('sale_id', $sale_id);
                         $builder->where('payment_id', $payment_id);
                         $success = $builder->update($sales_payments_data);
                     } else {
                         // Remove existing payment transactions with a payment amount of zero
-                        $success = $builder->delete(['payment_id' => $payment_id]);
+                        $success = $builder
+                            ->where('sale_id', $sale_id)
+                            ->delete(['payment_id' => $payment_id]);
                     }
                 }
             }
@@ -532,6 +557,7 @@ class Sale extends Model
         ?int    $dinner_table_id,
         ?array  &$sales_taxes
     ): int {    // TODO: this method returns the sale_id but the override is expecting it to return a bool. The signature needs to be reworked.  Generally when there are more than 3 maybe 4 parameters, there's a good chance that an object needs to be passed rather than so many params.
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $config = config(OSPOS::class)->settings;
         $attribute = model(Attribute::class);
         $customer = model(Customer::class);
@@ -541,12 +567,16 @@ class Sale extends Model
 
         $item_quantity = model(Item_quantity::class);
 
-        if ($saleId != NEW_ENTRY) {
-            $this->clear_suspended_sale_detail($saleId);
-        }
-
         if (count($items) == 0) {    // TODO: ===
             return -1;    // TODO: Replace -1 with a constant
+        }
+
+        if ($saleId != NEW_ENTRY) {
+            if (!$this->saleBelongsToBusinessUnit($saleId, $businessUnitId)) {
+                return -1;
+            }
+
+            $this->clear_suspended_sale_detail($saleId);
         }
 
         $sales_data = [
@@ -567,6 +597,7 @@ class Sale extends Model
 
         $builder = $this->db->table('sales');
         if ($saleId == NEW_ENTRY) {
+            $sales_data['business_unit_id'] = $businessUnitId;
             $builder->insert($sales_data);
             $saleId = $this->db->insertID();
         } else {
@@ -737,6 +768,10 @@ class Sale extends Model
      */
     public function get_sales_taxes(int $sale_id): array
     {
+        if (!$this->saleBelongsToBusinessUnit($sale_id, $this->getCurrentBusinessUnitId())) {
+            return [];
+        }
+
         $builder = $this->db->table('sales_taxes');
         $builder->where('sale_id', $sale_id);
         $builder->orderBy('print_sequence', 'asc');
@@ -766,9 +801,15 @@ class Sale extends Model
      */
     public function delete_list(array $sale_ids, int $employee_id, bool $update_inventory = true): bool
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $result = true;
 
         foreach ($sale_ids as $sale_id) {
+            if (!$this->saleBelongsToBusinessUnit((int) $sale_id, $businessUnitId)) {
+                $result = false;
+                continue;
+            }
+
             $result &= $this->delete($sale_id, false, $update_inventory, $employee_id);
         }
 
@@ -780,11 +821,19 @@ class Sale extends Model
      */
     public function restore_list(array $sale_ids, int $employee_id, bool $update_inventory = true): bool    // TODO: $employee_id and $update_inventory are never used in the function.
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+        $result = true;
+
         foreach ($sale_ids as $sale_id) {
-            $this->update_sale_status($sale_id, SUSPENDED);
+            if (!$this->saleBelongsToBusinessUnit((int) $sale_id, $businessUnitId)) {
+                $result = false;
+                continue;
+            }
+
+            $result &= $this->update_sale_status($sale_id, SUSPENDED);
         }
 
-        return true;
+        return $result;
     }
 
     /**
@@ -795,6 +844,10 @@ class Sale extends Model
      */
     public function delete($sale_id = null, bool $purge = false, bool $update_inventory = true, $employee_id = null): bool
     {
+        if (!$this->saleBelongsToBusinessUnit((int) $sale_id, $this->getCurrentBusinessUnitId())) {
+            return false;
+        }
+
         // Start a transaction to assure data integrity
         $this->db->transStart();
 
@@ -844,8 +897,11 @@ class Sale extends Model
      */
     public function get_sale_items(int $sale_id): ResultInterface
     {
-        $builder = $this->db->table('sales_items');
-        $builder->where('sale_id', $sale_id);
+        $builder = $this->db->table('sales_items AS sales_items');
+        $builder->select('sales_items.*', false);
+        $builder->join('sales AS sales', 'sales.sale_id = sales_items.sale_id', 'inner');
+        $builder->where('sales_items.sale_id = ' . $this->db->escape($sale_id), null, false);
+        $builder->where('sales.business_unit_id = ' . $this->db->escape($this->getCurrentBusinessUnitId()), null, false);
 
         return $builder->get();
     }
@@ -875,9 +931,13 @@ class Sale extends Model
             ' . $item->get_item_name('name') . ',
             category,
             item_type,
-            stock_type');
+            stock_type',
+            false
+        );
         $builder->join('items AS items', 'sales_items.item_id = items.item_id');
-        $builder->where('sales_items.sale_id', $sale_id);
+        $builder->join('sales AS sales', 'sales.sale_id = sales_items.sale_id', 'inner');
+        $builder->where('sales_items.sale_id = ' . $this->db->escape($sale_id), null, false);
+        $builder->where('sales.business_unit_id = ' . $this->db->escape($this->getCurrentBusinessUnitId()), null, false);
 
         // Entry sequence (this will render kits in the expected sequence)
         if ($config['line_sequence'] == '0') {    // TODO: Replace these with constants and this should be converted to a switch.
@@ -910,8 +970,11 @@ class Sale extends Model
      */
     public function get_sale_payments(int $sale_id): ResultInterface
     {
-        $builder = $this->db->table('sales_payments');
-        $builder->where('sale_id', $sale_id);
+        $builder = $this->db->table('sales_payments AS sales_payments');
+        $builder->select('sales_payments.*', false);
+        $builder->join('sales AS sales', 'sales.sale_id = sales_payments.sale_id', 'inner');
+        $builder->where('sales_payments.sale_id = ' . $this->db->escape($sale_id), null, false);
+        $builder->where('sales.business_unit_id = ' . $this->db->escape($this->getCurrentBusinessUnitId()), null, false);
 
         return $builder->get();
     }
@@ -948,8 +1011,11 @@ class Sale extends Model
 
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
-        return $customer->get_info($builder->get()->getRow()->customer_id);
+        $row = $builder->get()->getRow();
+
+        return $customer->get_info($row === null ? NEW_ENTRY : (int) $row->customer_id);
     }
 
     /**
@@ -959,10 +1025,13 @@ class Sale extends Model
     {
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
         $employee = model(Employee::class);
 
-        return $employee->get_info($builder->get()->getRow()->employee_id);
+        $row = $builder->get()->getRow();
+
+        return $employee->get_info($row === null ? NEW_ENTRY : (int) $row->employee_id);
     }
 
     /**
@@ -1042,6 +1111,10 @@ class Sale extends Model
             }
         } else {
             $where = 'sales.sale_id = ' . $this->db->escape($inputs['sale_id']);
+        }
+
+        if (!empty($inputs['business_unit_id'])) {
+            $where = '(' . $where . ') AND sales.business_unit_id = ' . $this->db->escape((int) $inputs['business_unit_id']);
         }
 
         $decimals = totals_decimals();
@@ -1178,15 +1251,19 @@ class Sale extends Model
      */
     public function get_all_suspended(?int $customer_id = null): array
     {
-        if ($customer_id == NEW_ENTRY) {
-            $query = $this->db->query("SELECT sale_id, case when sale_type = '" . SALE_TYPE_QUOTE . "' THEN quote_number WHEN sale_type = '" . SALE_TYPE_WORK_ORDER . "' THEN work_order_number else sale_id end as doc_id, sale_id as suspended_sale_id, sale_status, sale_time, dinner_table_id, customer_id, employee_id, comment FROM "
-                . $this->db->prefixTable('sales') . ' where sale_status = ' . SUSPENDED);
-        } else {
-            $query = $this->db->query("SELECT sale_id, case when sale_type = '" . SALE_TYPE_QUOTE . "' THEN quote_number WHEN sale_type = '" . SALE_TYPE_WORK_ORDER . "' THEN work_order_number else sale_id end as doc_id, sale_status, sale_time, dinner_table_id, customer_id, employee_id, comment FROM "
-                . $this->db->prefixTable('sales') . ' where sale_status = ' . SUSPENDED . ' AND customer_id = ' . $customer_id);
+        $builder = $this->db->table('sales');
+        $builder->select(
+            "sale_id, case when sale_type = '" . SALE_TYPE_QUOTE . "' THEN quote_number WHEN sale_type = '" . SALE_TYPE_WORK_ORDER . "' THEN work_order_number else sale_id end as doc_id, sale_id as suspended_sale_id, sale_status, sale_time, dinner_table_id, customer_id, employee_id, comment",
+            false
+        );
+        $builder->where('sale_status', SUSPENDED);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
+
+        if ($customer_id != NEW_ENTRY) {
+            $builder->where('customer_id', $customer_id);
         }
 
-        return $query->getResultArray() ?: [];
+        return $builder->get()->getResultArray() ?: [];
     }
 
     /**
@@ -1200,8 +1277,11 @@ class Sale extends Model
 
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
-        return $builder->get()->getRow()->dinner_table_id;
+        $row = $builder->get()->getRow();
+
+        return $row === null ? null : $row->dinner_table_id;
     }
 
     /**
@@ -1211,8 +1291,11 @@ class Sale extends Model
     {
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
-        return $builder->get()->getRow()->sale_type;
+        $row = $builder->get()->getRow();
+
+        return $row === null ? null : $row->sale_type;
     }
 
     /**
@@ -1222,8 +1305,11 @@ class Sale extends Model
     {
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
-        return $builder->get()->getRow()->sale_status;
+        $row = $builder->get()->getRow();
+
+        return $row === null ? CANCELED : (int) $row->sale_status;
     }
 
     /**
@@ -1231,12 +1317,20 @@ class Sale extends Model
      * @param int $sale_status
      * @return void
      */
-    public function update_sale_status(int $sale_id, int $sale_status): void
+    public function update_sale_status(int $sale_id, int $sale_status): bool
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+
+        if (!$this->saleBelongsToBusinessUnit($sale_id, $businessUnitId)) {
+            return false;
+        }
+
         $builder = $this->db->table('sales');
 
         $builder->where('sale_id', $sale_id);
-        $builder->update(['sale_status' => $sale_status]);
+        $builder->where('business_unit_id', $businessUnitId);
+
+        return $builder->update(['sale_status' => $sale_status]);
     }
 
     /**
@@ -1246,6 +1340,7 @@ class Sale extends Model
     {
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
         $row = $builder->get()->getRow();
 
@@ -1263,6 +1358,7 @@ class Sale extends Model
     {
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
         $row = $builder->get()->getRow();
 
@@ -1280,6 +1376,7 @@ class Sale extends Model
     {
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
         $row = $builder->get()->getRow();
 
@@ -1308,6 +1405,10 @@ class Sale extends Model
      */
     public function delete_suspended_sale(int $sale_id): bool
     {
+        if (!$this->saleBelongsToBusinessUnit($sale_id, $this->getCurrentBusinessUnitId())) {
+            return false;
+        }
+
         // Run these queries as a transaction, we want to make sure we do all or nothing
         $this->db->transStart();
         $config = config(OSPOS::class)->settings;
@@ -1331,6 +1432,10 @@ class Sale extends Model
      */
     public function clear_suspended_sale_detail(int $sale_id): bool
     {
+        if (!$this->saleBelongsToBusinessUnit($sale_id, $this->getCurrentBusinessUnitId())) {
+            return false;
+        }
+
         $this->db->transStart();
         $config = config(OSPOS::class)->settings;
 
@@ -1364,10 +1469,33 @@ class Sale extends Model
     {
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
         $builder->join('people', 'people.person_id = sales.customer_id', 'LEFT');
         $builder->where('sale_status', SUSPENDED);
 
         return $builder->get();
+    }
+
+    public function is_owned_by_current_business_unit(int $sale_id): bool
+    {
+        return $this->saleBelongsToBusinessUnit($sale_id, $this->getCurrentBusinessUnitId());
+    }
+
+    private function getCurrentBusinessUnitId(): int
+    {
+        return Services::businessUnit()->requireCurrentBusinessUnitId();
+    }
+
+    private function saleBelongsToBusinessUnit(int $saleId, int $businessUnitId): bool
+    {
+        if ($saleId == NEW_ENTRY) {
+            return false;
+        }
+
+        return $this->db->table('sales')
+            ->where('sale_id', $saleId)
+            ->where('business_unit_id', $businessUnitId)
+            ->countAllResults() === 1;
     }
 
     /**
