@@ -3,6 +3,7 @@
 namespace Config;
 
 use App\Libraries\BusinessUnitService;
+use App\Libraries\BusinessUnitInventoryService;
 use App\Libraries\MY_Language;
 use Locale;
 use HTMLPurifier;
@@ -85,5 +86,14 @@ class Services extends BaseService
         }
 
         return new BusinessUnitService();
+    }
+
+    public static function businessUnitInventory(bool $getShared = true): BusinessUnitInventoryService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('businessUnitInventory');
+        }
+
+        return new BusinessUnitInventoryService();
     }
 }
