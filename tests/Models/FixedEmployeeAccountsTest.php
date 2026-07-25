@@ -22,6 +22,7 @@ class FixedEmployeeAccountsTest extends CIUnitTestCase
         parent::setUp();
 
         $this->previousInitialPassword = getenv('POS_FIXED_ACCOUNT_INITIAL_PASSWORD');
+        $this->removeFixedAccounts();
         putenv('POS_FIXED_ACCOUNT_INITIAL_PASSWORD=' . self::INITIAL_PASSWORD);
 
         (new AddFixedEmployeeAccountScopes())->up();
@@ -167,6 +168,52 @@ class FixedEmployeeAccountsTest extends CIUnitTestCase
         $this->assertSame('DAY', $controller->accountScope());
     }
 
+    public function testSecureControllerAlwaysProvidesAllowedModulesArray(): void
+    {
+        $aggregate = $this->getEmployeeByUsername('NguyenDuyTai2');
+        db_connect()
+            ->table('grants')
+            ->where('person_id', (int)$aggregate->person_id)
+            ->where('permission_id', 'home')
+            ->update(['menu_group' => 'office']);
+        $this->loginAs((int)$aggregate->person_id);
+
+        $controller = new class extends Secure_Controller {
+            public function __construct()
+            {
+                parent::__construct('home', null, 'home');
+            }
+
+            public function allowedModules(): array
+            {
+                return $this->global_view_data['allowed_modules'];
+            }
+        };
+
+        $this->assertSame([], $controller->allowedModules());
+    }
+
+    public function testAggregateHomeGrantUsesHomeMenuGroup(): void
+    {
+        $aggregate = $this->getEmployeeByUsername('NguyenDuyTai2');
+
+        $this->assertSame('home', $this->getGrantMenuGroup((int)$aggregate->person_id, 'home'));
+    }
+
+    public function testMigrationRepairsAggregateHomeGrantMenuGroup(): void
+    {
+        $aggregate = $this->getEmployeeByUsername('NguyenDuyTai2');
+        db_connect()
+            ->table('grants')
+            ->where('person_id', (int)$aggregate->person_id)
+            ->where('permission_id', 'home')
+            ->update(['menu_group' => 'office']);
+
+        (new AddFixedEmployeeAccountScopes())->up();
+
+        $this->assertSame('home', $this->getGrantMenuGroup((int)$aggregate->person_id, 'home'));
+    }
+
     public function testMissingInitialPasswordThrowsBeforeAccountCreation(): void
     {
         $this->removeFixedAccounts();
@@ -221,6 +268,19 @@ class FixedEmployeeAccountsTest extends CIUnitTestCase
             ->table('employees')
             ->whereIn('username', array_keys(self::FIXED_ACCOUNTS))
             ->countAllResults();
+    }
+
+    private function getGrantMenuGroup(int $personId, string $permissionId): ?string
+    {
+        $grant = db_connect()
+            ->table('grants')
+            ->select('menu_group')
+            ->where('person_id', $personId)
+            ->where('permission_id', $permissionId)
+            ->get()
+            ->getRow();
+
+        return $grant->menu_group ?? null;
     }
 
     private function removeFixedAccounts(): void

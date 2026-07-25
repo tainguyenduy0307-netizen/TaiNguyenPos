@@ -137,16 +137,38 @@ class AddFixedEmployeeAccountScopes extends Migration
             : array_column($this->db->table('permissions')->select('permission_id')->get()->getResultArray(), 'permission_id');
 
         foreach ($permissionIds as $permissionId) {
-            if (!$this->permissionExists($permissionId) || $this->grantExists($personId, $permissionId)) {
+            if (!$this->permissionExists($permissionId)) {
+                continue;
+            }
+
+            $menuGroup = $this->getGrantMenuGroup($accountScope, $permissionId);
+
+            if ($this->grantExists($personId, $permissionId)) {
+                if ($accountScope === 'AGGREGATE' && $permissionId === 'home') {
+                    $this->db->table('grants')
+                        ->where('person_id', $personId)
+                        ->where('permission_id', $permissionId)
+                        ->update(['menu_group' => $menuGroup]);
+                }
+
                 continue;
             }
 
             $this->db->table('grants')->insert([
                 'permission_id' => $permissionId,
                 'person_id'     => $personId,
-                'menu_group'    => $this->getDefaultMenuGroup($permissionId),
+                'menu_group'    => $menuGroup,
             ]);
         }
+    }
+
+    private function getGrantMenuGroup(string $accountScope, string $permissionId): string
+    {
+        if ($accountScope === 'AGGREGATE' && $permissionId === 'home') {
+            return 'home';
+        }
+
+        return $this->getDefaultMenuGroup($permissionId);
     }
 
     private function permissionExists(string $permissionId): bool
