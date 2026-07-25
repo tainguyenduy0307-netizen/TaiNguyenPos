@@ -116,7 +116,19 @@ $request = Services::request();
                 </div>
 
                 <div class="navbar-right" style="margin: 0;">
-                    <?= anchor("home/changePassword/$user_info->person_id", "$user_info->first_name $user_info->last_name", ['class' => 'modal-dlg', 'data-btn-submit' => lang('Common.submit'), 'title' => lang('Employees.change_password')]) ?>
+                    <?php
+                    $accountScopeColors = [
+                        'DAY'       => '#ffd84d',
+                        'NIGHT'     => '#4db8ff',
+                        'AGGREGATE' => '#f5f7fa',
+                    ];
+                    $accountScope = $user_info->account_scope ?? null;
+                    $accountScopeColor = is_string($accountScope) && isset($accountScopeColors[$accountScope])
+                        ? $accountScopeColors[$accountScope]
+                        : '#f5f7fa';
+                    $accountScopeLabel = '<span style="color: ' . $accountScopeColor . ';">POS</span>';
+                    ?>
+                    <?= anchor("home/changePassword/$user_info->person_id", $accountScopeLabel, ['class' => 'modal-dlg', 'data-btn-submit' => lang('Common.submit'), 'title' => lang('Employees.change_password')]) ?>
                     <span>&nbsp;|&nbsp;</span>
                     <?= anchor('home/logout', lang('Login.logout')) ?>
                 </div>
