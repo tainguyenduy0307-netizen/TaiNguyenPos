@@ -37,7 +37,8 @@ class Employee extends Person
         'hash_version',
         'language',
         'language_code',
-        'account_scope'
+        'account_scope',
+        'business_unit_id'
     ];
 
     public function __construct()
@@ -163,6 +164,7 @@ class Employee extends Person
     {
         $success = false;
         unset($employee_data['account_scope']);
+        unset($employee_data['business_unit_id']);
 
         if ($employee_id != NEW_ENTRY && $this->isFixedAccount($employee_id)) {
             $current_employee = $this->get_info($employee_id);
@@ -578,6 +580,7 @@ class Employee extends Person
         }
 
         unset($employee_data['account_scope']);
+        unset($employee_data['business_unit_id']);
 
         if ($this->isFixedAccount((int)$employee_id)) {
             unset($employee_data['username']);

@@ -2,6 +2,7 @@
 
 namespace Config;
 
+use App\Libraries\BusinessUnitService;
 use App\Libraries\MY_Language;
 use Locale;
 use HTMLPurifier;
@@ -75,5 +76,14 @@ class Services extends BaseService
         }
 
         return static::$htmlPurifier;
+    }
+
+    public static function businessUnit(bool $getShared = true): BusinessUnitService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('businessUnit');
+        }
+
+        return new BusinessUnitService();
     }
 }
