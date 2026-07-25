@@ -51,6 +51,8 @@ class Receivings extends Secure_Controller
      */
     public function getIndex(): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         return $this->_reload();
     }
 
@@ -62,6 +64,8 @@ class Receivings extends Secure_Controller
      */
     public function getItemSearch(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $search = $this->request->getGet('term');
         $suggestions = $this->item->get_search_suggestions($search, ['search_custom' => false, 'is_deleted' => false], true);
         $suggestions = array_merge($suggestions, $this->item_kit->get_search_suggestions($search));
@@ -77,6 +81,8 @@ class Receivings extends Secure_Controller
      */
     public function getStockItemSearch(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $search = $this->request->getGet('term');
         $suggestions = $this->item->get_stock_search_suggestions($search, ['search_custom' => false, 'is_deleted' => false], true);
         $suggestions = array_merge($suggestions, $this->item_kit->get_search_suggestions($search));
@@ -92,6 +98,8 @@ class Receivings extends Secure_Controller
      */
     public function postSelectSupplier(): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $supplier_id = $this->request->getPost('supplier', FILTER_SANITIZE_NUMBER_INT);
         if ($this->supplier->exists($supplier_id)) {
             $this->receiving_lib->set_supplier($supplier_id);
@@ -108,6 +116,8 @@ class Receivings extends Secure_Controller
      */
     public function postChangeMode(): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $stock_destination = $this->request->getPost('stock_destination', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
         $stock_source = $this->request->getPost('stock_source', FILTER_SANITIZE_NUMBER_INT);
 
@@ -132,6 +142,8 @@ class Receivings extends Secure_Controller
      */
     public function postSetComment(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $this->receiving_lib->set_comment($this->request->getPost('comment', FILTER_SANITIZE_FULL_SPECIAL_CHARS));
         return $this->response->setJSON(['success' => true]);
     }
@@ -143,6 +155,8 @@ class Receivings extends Secure_Controller
      */
     public function postSetPrintAfterSale(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $this->receiving_lib->set_print_after_sale($this->request->getPost('recv_print_after_sale') != null);
         return $this->response->setJSON(['success' => true]);
     }
@@ -154,6 +168,8 @@ class Receivings extends Secure_Controller
      */
     public function postSetReference(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $this->receiving_lib->set_reference($this->request->getPost('recv_reference', FILTER_SANITIZE_FULL_SPECIAL_CHARS));
         return $this->response->setJSON(['success' => true]);
     }
@@ -166,6 +182,8 @@ class Receivings extends Secure_Controller
      */
     public function postAdd(): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $data = [];
 
         $mode = $this->receiving_lib->get_mode();
@@ -196,6 +214,8 @@ class Receivings extends Secure_Controller
      */
     public function postEditItem(int|string|null $item_id): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $data = [];
 
         $validation_rule = [
@@ -234,6 +254,8 @@ class Receivings extends Secure_Controller
      */
     public function getEdit($receiving_id): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $data = [];
 
         $data['suppliers'] = ['' => 'No Supplier'];
@@ -242,6 +264,10 @@ class Receivings extends Secure_Controller
         }
 
         $receiving_info = $this->receiving->get_info($receiving_id)->getRowArray();
+
+        if ($receiving_info === null) {
+            return '';
+        }
 
         $current_employee_id = $this->employee->get_logged_in_employee_info()->person_id;
         $can_assign_employee = $this->employee->has_grant('employees', $current_employee_id);
@@ -274,6 +300,8 @@ class Receivings extends Secure_Controller
      */
     public function getDeleteItem($item_number): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $this->receiving_lib->delete_item($item_number);
 
         return $this->_reload();    // TODO: Hungarian notation
@@ -287,6 +315,8 @@ class Receivings extends Secure_Controller
      */
     public function postDelete(int $receiving_id = -1, bool $update_inventory = true): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $employee_id = $this->employee->get_logged_in_employee_info()->person_id;
         $receiving_ids = $receiving_id == -1 ? $this->request->getPost('ids', FILTER_SANITIZE_NUMBER_INT) : [$receiving_id];    // TODO: Replace -1 with constant
 
@@ -309,6 +339,8 @@ class Receivings extends Secure_Controller
      */
     public function getRemoveSupplier(): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $this->receiving_lib->clear_reference();
         $this->receiving_lib->remove_supplier();
 
@@ -324,6 +356,7 @@ class Receivings extends Secure_Controller
      */
     public function postComplete(): string
     {
+        $this->requireCurrentBusinessUnitId();
 
         $data = [];
 
@@ -387,6 +420,8 @@ class Receivings extends Secure_Controller
      */
     public function postRequisitionComplete(): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         if ($this->receiving_lib->get_stock_source() != $this->receiving_lib->get_stock_destination()) {
             foreach ($this->receiving_lib->get_cart() as $item) {
                 $this->receiving_lib->delete_item($item['line']);
@@ -411,7 +446,14 @@ class Receivings extends Secure_Controller
      */
     public function getReceipt($receiving_id): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $receiving_info = $this->receiving->get_info($receiving_id)->getRowArray();
+
+        if ($receiving_info === null) {
+            return '';
+        }
+
         $this->receiving_lib->copy_entire_receiving($receiving_id);
         $data['cart'] = $this->receiving_lib->get_cart();
         $data['total'] = $this->receiving_lib->get_total();
@@ -499,6 +541,8 @@ class Receivings extends Secure_Controller
      */
     public function postSave(int $receiving_id = -1): ResponseInterface    // TODO: Replace -1 with a constant
     {
+        $this->requireCurrentBusinessUnitId();
+
         $newdate = $this->request->getPost('date', FILTER_SANITIZE_FULL_SPECIAL_CHARS);    // TODO: newdate does not follow naming conventions
 
         $date_formatter = date_create_from_format($this->config['dateformat'] . ' ' . $this->config['timeformat'], $newdate);
@@ -509,6 +553,15 @@ class Receivings extends Secure_Controller
 
         if (!$this->employee->has_grant('employees', $current_employee_id)) {
             $existing_receiving = $this->receiving->get_info($receiving_id)->getRowArray();
+
+            if ($existing_receiving === null) {
+                return $this->response->setJSON([
+                    'success' => false,
+                    'message' => lang('Receivings.unsuccessfully_updated'),
+                    'id'      => $receiving_id
+                ]);
+            }
+
             $employee_id = $existing_receiving['employee_id'];
         } else {
             $employee_id = $submitted_employee_id;
@@ -522,8 +575,9 @@ class Receivings extends Secure_Controller
             'reference'      => $this->request->getPost('reference') != '' ? $this->request->getPost('reference', FILTER_SANITIZE_FULL_SPECIAL_CHARS) : null
         ];
 
-        $this->inventory->update('RECV ' . $receiving_id, ['trans_date' => $receiving_time]);
         if ($this->receiving->update($receiving_id, $receiving_data)) {
+            $this->inventory->update('RECV ' . $receiving_id, ['trans_date' => $receiving_time]);
+
             return $this->response->setJSON([
                 'success' => true,
                 'message' => lang('Receivings.successfully_updated'),
@@ -546,8 +600,15 @@ class Receivings extends Secure_Controller
      */
     public function postCancelReceiving(): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $this->receiving_lib->clear_all();
 
         return $this->_reload();    // TODO: Hungarian Notation
+    }
+
+    private function requireCurrentBusinessUnitId(): int
+    {
+        return Services::businessUnit()->requireCurrentBusinessUnitId();
     }
 }

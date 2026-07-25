@@ -5,6 +5,7 @@ namespace App\Models;
 use CodeIgniter\Database\ResultInterface;
 use CodeIgniter\Model;
 use Config\OSPOS;
+use Config\Services;
 use ReflectionException;
 
 /**
@@ -20,6 +21,7 @@ class Receiving extends Model
         'receiving_time',
         'supplier_id',
         'employee_id',
+        'business_unit_id',
         'comment',
         'receiving_id',
         'payment_type',
@@ -32,10 +34,12 @@ class Receiving extends Model
      */
     public function get_info(int $receiving_id): ResultInterface
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $builder = $this->db->table('receivings');
         $builder->join('people', 'people.person_id = receivings.supplier_id', 'LEFT');
         $builder->join('suppliers', 'suppliers.person_id = receivings.supplier_id', 'LEFT');
         $builder->where('receiving_id', $receiving_id);
+        $builder->where('business_unit_id', $businessUnitId);
 
         return $builder->get();
     }
@@ -46,8 +50,10 @@ class Receiving extends Model
      */
     public function get_receiving_by_reference(string $reference): ResultInterface
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $builder = $this->db->table('receivings');
         $builder->where('reference', $reference);
+        $builder->where('business_unit_id', $businessUnitId);
 
         return $builder->get();
     }
@@ -80,6 +86,7 @@ class Receiving extends Model
     {
         $builder = $this->db->table('receivings');
         $builder->where('receiving_id', $receiving_id);
+        $builder->where('business_unit_id', $this->getCurrentBusinessUnitId());
 
         return ($builder->get()->getNumRows() == 1);
     }
@@ -91,10 +98,19 @@ class Receiving extends Model
      */
     public function update($receiving_id = null, $receiving_data = null): bool
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+
+        if (!$this->receivingBelongsToBusinessUnit((int) $receiving_id, $businessUnitId)) {
+            return false;
+        }
+
         $builder = $this->db->table('receivings');
         $builder->where('receiving_id', $receiving_id);
+        $builder->where('business_unit_id', $businessUnitId);
+        $update_data = $receiving_data;
+        unset($update_data['business_unit_id']);
 
-        return $builder->update($receiving_data);
+        return $builder->update($update_data);
     }
 
     /**
@@ -102,6 +118,7 @@ class Receiving extends Model
      */
     public function save_value(array $items, int $supplier_id, int $employee_id, string $comment, string $reference, ?string $payment_type, int $receiving_id = NEW_ENTRY): int    // TODO: $receiving_id gets overwritten before it's evaluated. It doesn't make sense to pass this here.
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $attribute = model(Attribute::class);
         $inventory = model('Inventory');
         $item = model(Item::class);
@@ -116,6 +133,7 @@ class Receiving extends Model
             'receiving_time' => date('Y-m-d H:i:s'),
             'supplier_id'    => $supplier->exists($supplier_id) ? $supplier_id : null,
             'employee_id'    => $employee_id,
+            'business_unit_id' => $businessUnitId,
             'payment_type'   => $payment_type,
             'comment'        => $comment,
             'reference'      => $reference
@@ -195,12 +213,18 @@ class Receiving extends Model
      */
     public function delete_list(array $receiving_ids, int $employee_id, bool $update_inventory = true): bool
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $success = true;
 
         // Start a transaction to assure data integrity
         $this->db->transStart();
 
         foreach ($receiving_ids as $receiving_id) {
+            if (!$this->receivingBelongsToBusinessUnit((int) $receiving_id, $businessUnitId)) {
+                $success = false;
+                continue;
+            }
+
             $success &= $this->delete_value($receiving_id, $employee_id, $update_inventory);
         }
 
@@ -217,6 +241,10 @@ class Receiving extends Model
      */
     public function delete_value(int $receiving_id, int $employee_id, bool $update_inventory = true): bool
     {
+        if (!$this->receivingBelongsToBusinessUnit($receiving_id, $this->getCurrentBusinessUnitId())) {
+            return false;
+        }
+
         // Start a transaction to assure data integrity
         $this->db->transStart();
 
@@ -268,6 +296,10 @@ class Receiving extends Model
         $builder = $this->db->table('receivings_items');
         $builder->where('receiving_id', $receiving_id);
 
+        if (!$this->receivingBelongsToBusinessUnit($receiving_id, $this->getCurrentBusinessUnitId())) {
+            $builder->where('receiving_id', NEW_ENTRY);
+        }
+
         return $builder->get();
     }
 
@@ -277,10 +309,15 @@ class Receiving extends Model
      */
     public function get_supplier(int $receiving_id): object
     {
+        $supplier = model(Supplier::class);
+
+        if (!$this->receivingBelongsToBusinessUnit($receiving_id, $this->getCurrentBusinessUnitId())) {
+            return $supplier->get_info(null);
+        }
+
         $builder = $this->db->table('receivings');
         $builder->where('receiving_id', $receiving_id);
 
-        $supplier = model(Supplier::class);
         return $supplier->get_info($builder->get()->getRow()->supplier_id);
     }
 
@@ -353,5 +390,27 @@ class Receiving extends Model
             ' (INDEX(receiving_date), INDEX(receiving_time), INDEX(receiving_id)) AS (' . $selectQuery . ')';
 
         $this->db->query($sql);
+    }
+
+    public function is_owned_by_current_business_unit(int $receiving_id): bool
+    {
+        return $this->receivingBelongsToBusinessUnit($receiving_id, $this->getCurrentBusinessUnitId());
+    }
+
+    private function getCurrentBusinessUnitId(): int
+    {
+        return Services::businessUnit()->requireCurrentBusinessUnitId();
+    }
+
+    private function receivingBelongsToBusinessUnit(int $receivingId, int $businessUnitId): bool
+    {
+        if ($receivingId == NEW_ENTRY) {
+            return false;
+        }
+
+        return $this->db->table('receivings')
+            ->where('receiving_id', $receivingId)
+            ->where('business_unit_id', $businessUnitId)
+            ->countAllResults() === 1;
     }
 }

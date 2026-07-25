@@ -402,18 +402,15 @@ class Receiving_lib
     }
 
     /**
-     * @param int $receipt_receiving_id
+     * @param string $receipt_receiving_id
      * @return void
      */
-    public function return_entire_receiving(int $receipt_receiving_id): void
+    public function return_entire_receiving(string $receipt_receiving_id): void
     {
-        // RECV #
-        $pieces = explode(' ', $receipt_receiving_id);
+        $receiving_id = $this->resolve_receiving_id($receipt_receiving_id);
 
-        if (preg_match("/(RECV|KIT)/", $pieces[0])) {    // TODO: this needs to be converted to ternary notation.
-            $receiving_id = $pieces[1];
-        } else {
-            $receiving_id = $this->receiving->get_receiving_by_reference($receipt_receiving_id)->getRow()->receiving_id;
+        if ($receiving_id === null || !$this->receiving->is_owned_by_current_business_unit($receiving_id)) {
+            return;
         }
 
         $this->empty_cart();
@@ -424,7 +421,7 @@ class Receiving_lib
             $this->add_item($row->item_id, -$row->quantity_purchased, $row->item_location, $row->discount, $row->discount_type, $row->item_unit_price, $row->description, $row->serialnumber, $row->receiving_quantity, $receiving_id, true);
         }
 
-        $this->set_supplier($this->receiving->get_supplier($receiving_id)->person_id);
+        $this->set_supplier((int) $this->receiving->get_supplier($receiving_id)->person_id);
     }
 
     /**
@@ -451,6 +448,10 @@ class Receiving_lib
      */
     public function copy_entire_receiving(int $receiving_id): void
     {
+        if (!$this->receiving->is_owned_by_current_business_unit($receiving_id)) {
+            return;
+        }
+
         $this->empty_cart();
         $this->remove_supplier();
 
@@ -507,5 +508,19 @@ class Receiving_lib
         }
 
         return $total;
+    }
+
+    private function resolve_receiving_id(string $receipt_receiving_id): ?int
+    {
+        // RECV #
+        $pieces = explode(' ', $receipt_receiving_id);
+
+        if (count($pieces) == 2 && preg_match("/(RECV|KIT)/", $pieces[0])) {
+            return (int) $pieces[1];
+        }
+
+        $receiving = $this->receiving->get_receiving_by_reference($receipt_receiving_id)->getRow();
+
+        return $receiving === null ? null : (int) $receiving->receiving_id;
     }
 }
