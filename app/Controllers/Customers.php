@@ -5,7 +5,9 @@ namespace App\Controllers;
 use App\Libraries\Mailchimp_lib;
 
 use App\Models\Customer;
+use App\Models\Customer_loyalty_ledger;
 use App\Models\Customer_rewards;
+use App\Models\Employee;
 use App\Models\Tax_code;
 use CodeIgniter\HTTP\DownloadResponse;
 use CodeIgniter\HTTP\ResponseInterface;
@@ -17,6 +19,7 @@ class Customers extends Persons
 {
     private string $_list_id;
     private Mailchimp_lib $mailchimp_lib;
+    private Customer_loyalty_ledger $customer_loyalty_ledger;
     private Customer_rewards $customer_rewards;
     private Customer $customer;
     private Tax_code $tax_code;
@@ -26,6 +29,7 @@ class Customers extends Persons
     {
         parent::__construct('customers');
         $this->mailchimp_lib = new Mailchimp_lib();
+        $this->customer_loyalty_ledger = model(Customer_loyalty_ledger::class);
         $this->customer_rewards = model(Customer_rewards::class);
         $this->customer = model(Customer::class);
         $this->tax_code = model(Tax_code::class);
@@ -59,18 +63,7 @@ class Customers extends Persons
         $person = $this->customer->get_info($row_id);
 
         // Retrieve the total amount the customer spent so far together with min, max and average values
-        $stats = $this->customer->get_stats($person->person_id);    // TODO: This and the next 11 lines are duplicated in search().  Extract a method.
-
-        if (empty($stats)) {
-            // Create object with empty properties.
-            $stats = new stdClass();
-            $stats->total = 0;
-            $stats->min = 0;
-            $stats->max = 0;
-            $stats->average = 0;
-            $stats->avg_discount = 0;
-            $stats->quantity = 0;
-        }
+        $stats = $this->getCustomerStats((int) $person->person_id);
 
         $data_row = get_customer_data_row($person, $stats);
 
@@ -98,17 +91,7 @@ class Customers extends Persons
 
         foreach ($customers->getResult() as $person) {
             // Retrieve the total amount the customer spent so far together with min, max and average values
-            $stats = $this->customer->get_stats($person->person_id);    // TODO: duplicated... see above
-            if (empty($stats)) {
-                // Create object with empty properties.
-                $stats = new stdClass();
-                $stats->total = 0;
-                $stats->min = 0;
-                $stats->max = 0;
-                $stats->average = 0;
-                $stats->avg_discount = 0;
-                $stats->quantity = 0;
-            }
+            $stats = $this->getCustomerStats((int) $person->person_id);
 
             $data_rows[] = get_customer_data_row($person, $stats);
         }
@@ -176,11 +159,21 @@ class Customers extends Persons
         }
         $data['packages'] = $packages;
         $data['selected_package'] = $info->package_id;
+        $data['can_edit_points'] = $this->canEditCustomerPoints() && (int) $customer_id !== NEW_ENTRY;
+        $data['loyalty_totals'] = $customer_id === NEW_ENTRY
+            ? [
+                'eligible_amount'    => 0.0,
+                'automatic_points'  => 0,
+                'manual_adjustment' => 0,
+                'points'            => 0,
+                'remainder_amount'  => 0.0,
+            ]
+            : $this->customer_loyalty_ledger->getTotals((int) $customer_id);
 
         $data['use_destination_based_tax'] = $this->config['use_destination_based_tax'];
 
         // Retrieve the total amount the customer spent so far together with min, max and average values
-        $stats = $this->customer->get_stats($customer_id);
+        $stats = $this->customer->get_stats($customer_id, $this->getCustomerHistoryBusinessUnitIds());
         if (!empty($stats)) {
             foreach (get_object_vars($stats) as $property => $value) {
                 $info->$property = $value;
@@ -312,6 +305,46 @@ class Customers extends Persons
                 'id'      => NEW_ENTRY
             ]);
         }
+    }
+
+    public function postSavePoints(int $customer_id): ResponseInterface
+    {
+        if (!$this->canEditCustomerPoints()) {
+            return $this->response
+                ->setStatusCode(403)
+                ->setJSON(['success' => false, 'message' => 'Customer points cannot be updated by this account.']);
+        }
+
+        $customer_info = $this->customer->get_info($customer_id);
+
+        if (empty($customer_info->person_id) || (int) $customer_info->deleted === 1) {
+            return $this->response
+                ->setStatusCode(404)
+                ->setJSON(['success' => false, 'message' => lang('Customers.error_adding_updating')]);
+        }
+
+        $requested_points = trim((string) $this->request->getPost('requested_points'));
+
+        if (!preg_match('/^\d+$/', $requested_points)) {
+            return $this->response
+                ->setStatusCode(422)
+                ->setJSON(['success' => false, 'message' => lang('Common.correct_errors')]);
+        }
+
+        $employee_id = (int) $this->employee->get_logged_in_employee_info()->person_id;
+        $success = $this->customer_loyalty_ledger->setManualPointsTarget(
+            $customer_id,
+            (int) $requested_points,
+            $employee_id,
+            $this->request->getPost('reason')
+        );
+
+        return $this->response->setJSON([
+            'success' => $success,
+            'message' => $success ? lang('Customers.successful_updating') : lang('Customers.error_adding_updating'),
+            'id'      => $customer_id,
+            'points'  => $this->customer_loyalty_ledger->getTotals($customer_id)['points'],
+        ]);
     }
 
     /**
@@ -489,5 +522,68 @@ class Customers extends Persons
                 return $this->response->setJSON(['success' => false, 'message' => lang('Customers.csv_import_nodata_wrongformat')]);
             }
         }
+    }
+
+    private function getCustomerStats(int $customer_id): stdClass
+    {
+        $stats = $this->customer->get_stats($customer_id, $this->getCustomerHistoryBusinessUnitIds());
+
+        if (!empty($stats)) {
+            return $stats;
+        }
+
+        $stats = new stdClass();
+        $stats->total = 0;
+        $stats->min = 0;
+        $stats->max = 0;
+        $stats->average = 0;
+        $stats->avg_discount = 0;
+        $stats->quantity = 0;
+
+        return $stats;
+    }
+
+    /**
+     * @return array<int>
+     */
+    private function getCustomerHistoryBusinessUnitIds(): array
+    {
+        $accountScope = $this->getAccountScope();
+
+        if (in_array($accountScope, [Employee::ACCOUNT_SCOPE_DAY, Employee::ACCOUNT_SCOPE_NIGHT], true)) {
+            $businessUnit = Services::businessUnit()->getCurrentBusinessUnit();
+
+            if ($businessUnit !== null && $businessUnit->code === $accountScope) {
+                return [(int) $businessUnit->id];
+            }
+        }
+
+        if ($accountScope === Employee::ACCOUNT_SCOPE_AGGREGATE) {
+            return $this->getAggregateBusinessUnitIds();
+        }
+
+        return [];
+    }
+
+    /**
+     * @return array<int>
+     */
+    private function getAggregateBusinessUnitIds(): array
+    {
+        return array_map('intval', array_column(
+            db_connect()
+                ->table('business_units')
+                ->select('id')
+                ->whereIn('code', [Employee::ACCOUNT_SCOPE_DAY, Employee::ACCOUNT_SCOPE_NIGHT])
+                ->where('enabled', 1)
+                ->get()
+                ->getResultArray(),
+            'id'
+        ));
+    }
+
+    private function canEditCustomerPoints(): bool
+    {
+        return in_array($this->getAccountScope(), [Employee::ACCOUNT_SCOPE_DAY, Employee::ACCOUNT_SCOPE_NIGHT], true);
     }
 }

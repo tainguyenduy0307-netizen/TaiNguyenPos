@@ -2,7 +2,10 @@
 
 namespace Tests\Models;
 
+use App\Controllers\Sales as SalesController;
+use App\Controllers\Customers as CustomersController;
 use App\Database\Migrations\AddBusinessUnits;
+use App\Database\Migrations\AddCustomerLoyaltyAdjustments;
 use App\Database\Migrations\AddCustomerLoyaltyLedger;
 use App\Database\Migrations\AddFixedEmployeeAccountScopes;
 use App\Database\Migrations\AddSalesBusinessUnitScope;
@@ -10,16 +13,22 @@ use App\Models\Customer;
 use App\Models\Customer_loyalty_ledger;
 use App\Models\Sale;
 use CodeIgniter\Test\CIUnitTestCase;
+use CodeIgniter\Test\FeatureTestTrait;
 use Config\Services;
+use ReflectionMethod;
+use ReflectionProperty;
 use RuntimeException;
 
 require_once APPPATH . 'Database/Migrations/20260724000000_AddFixedEmployeeAccountScopes.php';
 require_once APPPATH . 'Database/Migrations/20260725000000_AddBusinessUnits.php';
 require_once APPPATH . 'Database/Migrations/20260725000001_AddSalesBusinessUnitScope.php';
 require_once APPPATH . 'Database/Migrations/20260726000002_AddCustomerLoyaltyLedger.php';
+require_once APPPATH . 'Database/Migrations/20260726000003_AddCustomerLoyaltyAdjustments.php';
 
 class CustomerLoyaltyLedgerTest extends CIUnitTestCase
 {
+    use FeatureTestTrait;
+
     private const INITIAL_PASSWORD = 'TestOnlyPassword123!';
     private const TEST_PREFIX = 'CUSTOMER_LOYALTY_TEST_';
     private const FIXED_ACCOUNTS = [
@@ -45,6 +54,7 @@ class CustomerLoyaltyLedgerTest extends CIUnitTestCase
         (new AddBusinessUnits())->up();
         (new AddSalesBusinessUnitScope())->up();
         (new AddCustomerLoyaltyLedger())->up();
+        (new AddCustomerLoyaltyAdjustments())->up();
 
         $this->itemId = $this->createTestItem();
     }
@@ -192,6 +202,155 @@ class CustomerLoyaltyLedgerTest extends CIUnitTestCase
         $this->assertEqualsWithDelta(2.0, (float) $stats->quantity, 0.01);
     }
 
+    public function testManualAdjustmentAddsToAutomaticPointsAndSurvivesSaleSync(): void
+    {
+        $customerId = $this->createCustomer();
+        $this->loginAsUsername('NguyenDuyTai');
+
+        $this->saveSale($customerId, '300000.00');
+        $this->assertLoyaltyTotals($customerId, 300000.00, 2, 0.00);
+
+        $this->assertTrue(model(Customer_loyalty_ledger::class)->setManualPointsTarget(
+            $customerId,
+            5,
+            $this->getLoggedInEmployeeId(),
+            self::TEST_PREFIX . 'manual target'
+        ));
+        $this->assertLoyaltyTotals($customerId, 300000.00, 2, 0.00, 3, 5);
+        $this->assertSame(1, $this->adjustmentCountForCustomer($customerId));
+
+        $this->assertTrue(model(Customer_loyalty_ledger::class)->setManualPointsTarget(
+            $customerId,
+            5,
+            $this->getLoggedInEmployeeId()
+        ));
+        $this->assertSame(1, $this->adjustmentCountForCustomer($customerId));
+
+        $this->saveSale($customerId, '150000.00');
+        $this->assertLoyaltyTotals($customerId, 450000.00, 3, 0.00, 3, 6);
+
+        $this->assertTrue(model(Customer_loyalty_ledger::class)->setManualPointsTarget(
+            $customerId,
+            4,
+            $this->getLoggedInEmployeeId()
+        ));
+        $this->assertLoyaltyTotals($customerId, 450000.00, 3, 0.00, 1, 4);
+        $this->assertSame(2, $this->adjustmentCountForCustomer($customerId));
+    }
+
+    public function testManualAdjustmentCannotMakeCustomerPointsNegative(): void
+    {
+        $customerId = $this->createCustomer();
+        $this->loginAsUsername('NguyenDuyTai');
+
+        $saleId = $this->saveSale($customerId, '150000.00');
+        $this->assertLoyaltyTotals($customerId, 150000.00, 1, 0.00);
+
+        $this->assertTrue(model(Customer_loyalty_ledger::class)->setManualPointsTarget(
+            $customerId,
+            0,
+            $this->getLoggedInEmployeeId()
+        ));
+        $this->assertLoyaltyTotals($customerId, 150000.00, 1, 0.00, -1, 0);
+
+        $this->assertTrue(model(Sale::class)->delete($saleId, false, false, $this->getLoggedInEmployeeId()));
+        $this->assertLoyaltyTotals($customerId, 0.00, 0, 0.00, -1, 0);
+    }
+
+    public function testDayCanSaveManualPointsThroughEndpointAndSpoofedFieldsAreIgnored(): void
+    {
+        $customerId = $this->createCustomer();
+        $dayEmployeeId = $this->getEmployeeId('NguyenDuyTai');
+
+        $response = $this
+            ->withSession(['person_id' => $dayEmployeeId, 'menu_group' => 'office'])
+            ->post('/customers/savePoints/' . $customerId, [
+                'requested_points' => '7',
+                'points_delta'     => '999',
+                'employee_id'      => $this->getEmployeeId('NguyenDuyTai1'),
+                'business_unit_id' => 999999,
+            ]);
+
+        $response->assertOK();
+        $payload = json_decode($response->getJSON(), true);
+
+        $this->assertTrue($payload['success']);
+        $this->assertLoyaltyTotals($customerId, 0.00, 0, 0.00, 7, 7);
+
+        $adjustment = db_connect()->table('customer_loyalty_adjustments')
+            ->where('customer_id', $customerId)
+            ->get()
+            ->getRow();
+
+        $this->assertSame(7, (int) $adjustment->points_delta);
+        $this->assertSame(7, (int) $adjustment->resulting_points);
+        $this->assertSame($dayEmployeeId, (int) $adjustment->employee_id);
+    }
+
+    public function testAggregateCannotSaveManualPointsThroughEndpoint(): void
+    {
+        $customerId = $this->createCustomer();
+        $this->loginAsUsername('NguyenDuyTai');
+
+        $controller = new CustomersController();
+        $controller->initController(Services::request(), Services::response(), Services::logger());
+        $accountScope = new ReflectionProperty($controller, 'accountScope');
+        $accountScope->setAccessible(true);
+        $accountScope->setValue($controller, 'AGGREGATE');
+        $response = $controller->postSavePoints($customerId);
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertSame(0, $this->adjustmentCountForCustomer($customerId));
+        $this->assertSame(0, $this->getCustomerPoints($customerId));
+    }
+
+    public function testSalesCustomerDataIncludesSharedPointsForPosDisplay(): void
+    {
+        $customerId = $this->createCustomer();
+        $this->loginAsUsername('NguyenDuyTai');
+
+        $this->saveSale($customerId, '150000.00');
+        $this->assertTrue(model(Customer_loyalty_ledger::class)->setManualPointsTarget(
+            $customerId,
+            4,
+            $this->getLoggedInEmployeeId()
+        ));
+
+        $controller = new SalesController();
+        $data = [];
+        $method = new ReflectionMethod($controller, '_load_customer_data');
+        $method->setAccessible(true);
+        $method->invokeArgs($controller, [$customerId, &$data, true]);
+
+        $this->assertSame(4, $data['customer_points']);
+        $this->assertArrayHasKey('customer_phone_number', $data);
+        $this->assertEqualsWithDelta(150000.00, (float) $data['customer_total'], 0.01);
+    }
+
+    public function testCustomerStatsCanBeScopedByBusinessUnit(): void
+    {
+        $customerId = $this->createCustomer();
+
+        $this->loginAsUsername('NguyenDuyTai');
+        $this->saveSale($customerId, '100000.00');
+        $nullScopeSaleId = $this->saveSale($customerId, '300000.00');
+        db_connect()->table('sales')
+            ->where('sale_id', $nullScopeSaleId)
+            ->update(['business_unit_id' => null]);
+
+        $this->loginAsUsername('NguyenDuyTai1');
+        $this->saveSale($customerId, '200000.00');
+
+        $dayBusinessUnitId = $this->getBusinessUnitId('DAY');
+        $nightBusinessUnitId = $this->getBusinessUnitId('NIGHT');
+
+        $this->assertEqualsWithDelta(600000.00, $this->getStatsTotal($customerId), 0.01);
+        $this->assertEqualsWithDelta(100000.00, $this->getStatsTotal($customerId, [$dayBusinessUnitId]), 0.01);
+        $this->assertEqualsWithDelta(200000.00, $this->getStatsTotal($customerId, [$nightBusinessUnitId]), 0.01);
+        $this->assertEqualsWithDelta(300000.00, $this->getStatsTotal($customerId, [$dayBusinessUnitId, $nightBusinessUnitId]), 0.01);
+        $this->assertSame(0.0, $this->getStatsTotal($customerId, []));
+    }
+
     private function saveSale(
         int $customerId,
         string $amount,
@@ -248,14 +407,23 @@ class CustomerLoyaltyLedgerTest extends CIUnitTestCase
         return $saleId;
     }
 
-    private function assertLoyaltyTotals(int $customerId, float $eligibleAmount, int $points, float $remainderAmount): void
-    {
+    private function assertLoyaltyTotals(
+        int $customerId,
+        float $eligibleAmount,
+        int $automaticPoints,
+        float $remainderAmount,
+        int $manualAdjustment = 0,
+        ?int $finalPoints = null
+    ): void {
+        $finalPoints ??= max(0, $automaticPoints + $manualAdjustment);
         $totals = model(Customer_loyalty_ledger::class)->getTotals($customerId);
 
         $this->assertEqualsWithDelta($eligibleAmount, $totals['eligible_amount'], 0.01);
-        $this->assertSame($points, $totals['points']);
+        $this->assertSame($automaticPoints, $totals['automatic_points']);
+        $this->assertSame($manualAdjustment, $totals['manual_adjustment']);
+        $this->assertSame($finalPoints, $totals['points']);
         $this->assertEqualsWithDelta($remainderAmount, $totals['remainder_amount'], 0.01);
-        $this->assertSame($points, $this->getCustomerPoints($customerId));
+        $this->assertSame($finalPoints, $this->getCustomerPoints($customerId));
     }
 
     private function createCustomer(): int
@@ -331,6 +499,34 @@ class CustomerLoyaltyLedgerTest extends CIUnitTestCase
             ->countAllResults();
     }
 
+    private function adjustmentCountForCustomer(int $customerId): int
+    {
+        return db_connect()->table('customer_loyalty_adjustments')
+            ->where('customer_id', $customerId)
+            ->countAllResults();
+    }
+
+    /**
+     * @param array<int>|null $businessUnitIds
+     */
+    private function getStatsTotal(int $customerId, ?array $businessUnitIds = null): float
+    {
+        $stats = model(Customer::class)->get_stats($customerId, $businessUnitIds);
+
+        return $stats === null ? 0.0 : (float) $stats->total;
+    }
+
+    private function getBusinessUnitId(string $code): int
+    {
+        return (int) db_connect()
+            ->table('business_units')
+            ->select('id')
+            ->where('code', $code)
+            ->get()
+            ->getRow()
+            ->id;
+    }
+
     private function getCustomerPoints(int $customerId): int
     {
         return (int) db_connect()->table('customers')
@@ -398,6 +594,9 @@ class CustomerLoyaltyLedgerTest extends CIUnitTestCase
 
         if ($itemIds !== []) {
             $db->table('inventory')->whereIn('trans_items', $itemIds)->delete();
+            if ($db->tableExists('business_unit_item_quantities')) {
+                $db->table('business_unit_item_quantities')->whereIn('item_id', $itemIds)->delete();
+            }
             $db->table('item_quantities')->whereIn('item_id', $itemIds)->delete();
             $db->table('items')->whereIn('item_id', $itemIds)->delete();
         }
@@ -412,6 +611,9 @@ class CustomerLoyaltyLedgerTest extends CIUnitTestCase
         );
 
         if ($personIds !== []) {
+            if ($db->tableExists('customer_loyalty_adjustments')) {
+                $db->table('customer_loyalty_adjustments')->whereIn('customer_id', $personIds)->delete();
+            }
             if ($db->tableExists('customer_loyalty_ledger')) {
                 $db->table('customer_loyalty_ledger')->whereIn('customer_id', $personIds)->delete();
             }

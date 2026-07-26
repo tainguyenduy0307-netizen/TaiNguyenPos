@@ -8,6 +8,8 @@
  * @var string $sales_tax_code_label
  * @var string $employee
  * @var array $config
+ * @var bool $can_edit_points
+ * @var array $loyalty_totals
  */
 ?>
 
@@ -131,20 +133,28 @@
                             ) ?>
                         </div>
                     </div>
-
-                    <div class="form-group form-group-sm">
-                        <?= form_label(lang('Customers.available_points'), 'available_points', ['class' => 'control-label col-xs-3']) ?>
-                        <div class="col-xs-4">
-                            <?= form_input([
-                                'name'     => 'available_points',
-                                'id'       => 'available_points',
-                                'class'    => 'form-control input-sm',
-                                'value'    => $person_info->points,
-                                'disabled' => ''
-                            ]) ?>
-                        </div>
-                    </div>
                 <?php endif; ?>
+
+                <div class="form-group form-group-sm">
+                    <?= form_label(lang('Customers.available_points'), 'requested_points', ['class' => 'control-label col-xs-3']) ?>
+                    <div class="col-xs-4">
+                        <?php
+                        $points_input = [
+                            'name'    => 'requested_points',
+                            'id'      => 'requested_points',
+                            'class'   => 'form-control input-sm',
+                            'value'   => (string) $loyalty_totals['points'],
+                            'min'     => '0',
+                            'pattern' => '[0-9]*',
+                        ];
+
+                        if (!$can_edit_points) {
+                            $points_input['disabled'] = '';
+                        }
+                        ?>
+                        <?= form_input($points_input) ?>
+                    </div>
+                </div>
 
                 <div class="form-group form-group-sm">
                     <?= form_label(lang('Customers.taxable'), 'taxable', ['class' => 'control-label col-xs-3']) ?>
@@ -471,10 +481,39 @@
 
         $('#customer_form').validate($.extend({
             submitHandler: function(form) {
+                var finish_submit = function(response) {
+                    dialog_support.hide();
+                    table_support.handle_submit("<?= $controller_name ?>", response);
+                };
+                var display_error = function(message) {
+                    $('#error_message_box').empty().append($('<li>').text(message));
+                };
+
                 $(form).ajaxSubmit({
                     success: function(response) {
-                        dialog_support.hide();
-                        table_support.handle_submit("<?= $controller_name ?>", response);
+                        if (!response.success || !$('#requested_points').is(':enabled')) {
+                            finish_submit(response);
+                            return;
+                        }
+
+                        $.post(
+                            "<?= site_url("$controller_name/savePoints") ?>/" + response.id,
+                            {
+                                requested_points: $('#requested_points').val()
+                            },
+                            function(points_response) {
+                                if (points_response.success) {
+                                    finish_submit(response);
+                                    return;
+                                }
+
+                                display_error(points_response.message || "<?= lang('Common.correct_errors') ?>");
+                            },
+                            'json'
+                        ).fail(function(xhr) {
+                            var response_json = xhr.responseJSON || {};
+                            display_error(response_json.message || "<?= lang('Common.correct_errors') ?>");
+                        });
                     },
                     dataType: 'json'
                 });
@@ -505,6 +544,10 @@
                             // Account_number is posted by default
                         }
                     }
+                },
+                requested_points: {
+                    digits: true,
+                    min: 0
                 }
             },
 
@@ -513,7 +556,8 @@
                 last_name: "<?= lang('Common.last_name_required') ?>",
                 consent: "<?= lang('Customers.consent_required') ?>",
                 email: "<?= lang('Customers.email_duplicate') ?>",
-                account_number: "<?= lang('Customers.account_number_duplicate') ?>"
+                account_number: "<?= lang('Customers.account_number_duplicate') ?>",
+                requested_points: "<?= lang('Common.correct_errors') ?>"
             }
         }, form_support.error));
     });

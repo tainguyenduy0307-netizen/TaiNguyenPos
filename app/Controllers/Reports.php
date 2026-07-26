@@ -1366,7 +1366,13 @@ class Reports extends Secure_Controller
     {
         $this->clearCache();
 
-        $inputs = ['start_date' => $start_date, 'end_date' => $end_date, 'customer_id' => $customer_id, 'sale_type' => $sale_type, 'payment_type' => $payment_type];
+        $inputs = $this->withReportBusinessUnitScope([
+            'start_date'   => $start_date,
+            'end_date'     => $end_date,
+            'customer_id'   => $customer_id,
+            'sale_type'     => $sale_type,
+            'payment_type'  => $payment_type,
+        ]);
 
         $specific_customer = model(Specific_customer::class);
 
@@ -1401,16 +1407,7 @@ class Reports extends Secure_Controller
                 'profit'        => to_currency($row['profit']),
                 'payment_type'  => $row['payment_type'],
                 'comment'       => $row['comment'],
-                'edit'          => anchor(
-                    'sales/edit/' . $row['sale_id'],
-                    '<span class="glyphicon glyphicon-edit"></span>',
-                    [
-                        'class'           => 'modal-dlg print_hide',
-                        $button_key       => $button_label,
-                        'data-btn-submit' => lang('Common.submit'),
-                        'title'           => lang('Sales.update')
-                    ]
-                )
+                'edit'          => $this->getDetailedSaleEditAnchor((int) $row['sale_id'], $button_key, $button_label)
             ];
 
             foreach ($report_data['details'][$key] as $drow) {    // TODO: Duplicated Code

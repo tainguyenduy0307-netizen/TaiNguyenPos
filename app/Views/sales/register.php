@@ -306,6 +306,12 @@ helper('url');
                             <th style="width: 45%; text-align: right;"><?= esc($customer_email) ?></th>
                         </tr>
                     <?php } ?>
+                    <?php if (!empty($customer_phone_number)) { ?>
+                        <tr>
+                            <th style="width: 55%;"><?= lang('Common.phone_number') ?></th>
+                            <th style="width: 45%; text-align: right;"><?= esc($customer_phone_number) ?></th>
+                        </tr>
+                    <?php } ?>
                     <?php if (!empty($customer_address)) { ?>
                         <tr>
                             <th style="width: 55%;"><?= lang(ucfirst($controller_name) . '.customer_address') ?></th>
@@ -322,18 +328,10 @@ helper('url');
                         <th style="width: 55%;"><?= lang(ucfirst($controller_name) . '.customer_discount') ?></th>
                         <th style="width: 45%; text-align: right;"><?= ($customer_discount_type == FIXED) ? to_currency($customer_discount) : $customer_discount . '%' ?></th>
                     </tr>
-                    <?php if ($config['customer_reward_enable']): ?>
-                        <?php if (!empty($customer_rewards)) { ?>
-                            <tr>
-                                <th style="width: 55%;"><?= lang(ucfirst($controller_name) . '.rewards_package') ?></th>
-                                <th style="width: 45%; text-align: right;"><?= esc($customer_rewards['package_name']) ?></th>
-                            </tr>
-                            <tr>
-                                <th style="width: 55%;"><?= lang('Customers.available_points') ?></th>
-                                <th style="width: 45%; text-align: right;"><?= esc($customer_rewards['points']) ?></th>
-                            </tr>
-                        <?php } ?>
-                    <?php endif; ?>
+                    <tr>
+                        <th style="width: 55%;"><?= lang('Customers.available_points') ?></th>
+                        <th style="width: 45%; text-align: right;"><?= esc($customer_points ?? 0) ?></th>
+                    </tr>
                     <tr>
                         <th style="width: 55%;"><?= lang(ucfirst($controller_name) . '.customer_total') ?></th>
                         <th style="width: 45%; text-align: right;"><?= to_currency($customer_total) ?></th>

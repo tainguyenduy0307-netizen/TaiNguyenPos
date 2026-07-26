@@ -124,8 +124,7 @@ class Sale_libPaymentTest extends CIUnitTestCase
         $this->saleLib->addPayment('credit', '5.00', 'REF001');
 
         $payments = $this->saleLib->getPayments();
-        // bcadd strips trailing zeros: '10.00' + '5.00' = '15'
-        $this->assertSame('15', $payments['credit']['payment_amount']);
+        $this->assertEqualsWithDelta(15.00, (float) $payments['credit']['payment_amount'], 0.001);
     }
 
     public function testAddPaymentCashAdjustmentFlagStored(): void

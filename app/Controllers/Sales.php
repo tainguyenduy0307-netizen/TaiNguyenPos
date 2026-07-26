@@ -8,7 +8,6 @@ use App\Libraries\Sale_lib;
 use App\Libraries\Tax_lib;
 use App\Libraries\Token_lib;
 use App\Models\Customer;
-use App\Models\Customer_rewards;
 use App\Models\Dinner_table;
 use App\Models\Employee;
 use App\Models\Giftcard;
@@ -36,7 +35,6 @@ class Sales extends Secure_Controller
     private Tax_lib $tax_lib;
     private Token_lib $token_lib;
     private Customer $customer;
-    private Customer_rewards $customer_rewards;
     private Dinner_table $dinner_table;
     protected Employee $employee;
     private Item $item;
@@ -62,7 +60,6 @@ class Sales extends Secure_Controller
         $this->item = model(Item::class);
         $this->item_kit = model(Item_kit::class);
         $this->stock_location = model(Stock_location::class);
-        $this->customer_rewards = model(Customer_rewards::class);
         $this->dinner_table = model(Dinner_table::class);
         $this->employee = model(Employee::class);
     }
@@ -1055,6 +1052,7 @@ class Sales extends Secure_Controller
             $data['first_name'] = $customer_info->first_name;
             $data['last_name'] = $customer_info->last_name;
             $data['customer_email'] = $customer_info->email;
+            $data['customer_phone_number'] = $customer_info->phone_number;
             $data['customer_address'] = $customer_info->address_1;
 
             if (!empty($customer_info->zip) || !empty($customer_info->city)) {
@@ -1066,18 +1064,10 @@ class Sales extends Secure_Controller
             $data['customer_account_number'] = $customer_info->account_number;
             $data['customer_discount'] = $customer_info->discount;
             $data['customer_discount_type'] = $customer_info->discount_type;
-            $package_id = $this->customer->get_info($customer_id)->package_id;
-
-            if ($package_id != null) {
-                $package_name = $this->customer_rewards->get_name($package_id);
-                $points = $this->customer->get_info($customer_id)->points;
-                $data['customer_rewards']['package_id'] = $package_id;
-                $data['customer_rewards']['points'] = empty($points) ? 0 : $points;
-                $data['customer_rewards']['package_name'] = $package_name;
-            }
+            $data['customer_points'] = empty($customer_info->points) ? 0 : (int) $customer_info->points;
 
             if ($stats) {
-                $cust_stats = $this->customer->get_stats($customer_id);
+                $cust_stats = $this->customer->get_stats($customer_id, [$this->requireCurrentBusinessUnitId()]);
                 $data['customer_total'] = empty($cust_stats) ? 0 : $cust_stats->total;
             }
 

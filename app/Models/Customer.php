@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use CodeIgniter\Database\ResultInterface;
+use CodeIgniter\Database\BaseBuilder;
 use Config\OSPOS;
 use stdClass;
 
@@ -128,8 +129,10 @@ class Customer extends Person
 
     /**
      * Gets stats about a particular customer
+     *
+     * @param array<int>|null $businessUnitIds Null keeps the legacy global stats behavior.
      */
-    public function get_stats(int $customer_id): ?stdClass
+    public function get_stats(int $customer_id, ?array $businessUnitIds = null): ?stdClass
     {
         $db_prefix = $this->db->getPrefix();
         $totals_decimals = totals_decimals();
@@ -140,6 +143,7 @@ class Customer extends Person
         $builder->select('sales.sale_id AS sale_id, AVG(`' . $db_prefix . 'sales_items`.`discount`) AS avg_discount, SUM(`' . $db_prefix . 'sales_items`.`quantity_purchased`) AS quantity');
         $builder->join('sales_items', 'sales_items.sale_id = sales.sale_id');
         $builder->where('sales.customer_id', $customer_id);
+        $this->applySalesBusinessUnitScope($builder, $businessUnitIds);
         $builder->groupBy('sale_id');
         $selectQuery = $builder->getCompiledSelect();
 
@@ -161,6 +165,7 @@ class Customer extends Person
         $builder->join('sales_items_temp AS sales_items_temp', 'sales.sale_id = sales_items_temp.sale_id');
         $builder->where('sales.customer_id', $customer_id);
         $builder->where('sales.sale_status', COMPLETED);
+        $this->applySalesBusinessUnitScope($builder, $businessUnitIds);
         $builder->groupBy('sales.customer_id');
 
         $stat = $builder->get()->getRow();
@@ -170,6 +175,25 @@ class Customer extends Person
         $this->db->query($sql);
 
         return $stat;
+    }
+
+    /**
+     * @param array<int>|null $businessUnitIds
+     */
+    private function applySalesBusinessUnitScope(BaseBuilder $builder, ?array $businessUnitIds): void
+    {
+        if ($businessUnitIds === null) {
+            return;
+        }
+
+        $businessUnitIds = array_values(array_unique(array_filter(array_map('intval', $businessUnitIds))));
+
+        if ($businessUnitIds === []) {
+            $builder->where('1 = 0');
+            return;
+        }
+
+        $builder->whereIn('sales.business_unit_id', $businessUnitIds);
     }
 
     /**

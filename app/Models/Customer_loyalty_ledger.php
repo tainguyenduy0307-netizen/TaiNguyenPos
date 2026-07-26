@@ -4,6 +4,7 @@ namespace App\Models;
 
 use CodeIgniter\Model;
 use Config\OSPOS;
+use RuntimeException;
 
 class Customer_loyalty_ledger extends Model
 {
@@ -51,17 +52,12 @@ class Customer_loyalty_ledger extends Model
 
         foreach ($customerIds as $customerId) {
             $this->lockCustomer($customerId);
-            $totals = $this->getTotals($customerId);
-            $points = (int) floor($totals['eligible_amount'] / self::POINT_AMOUNT);
-
-            $this->db->table('customers')
-                ->where('person_id', $customerId)
-                ->update(['points' => max(0, $points)]);
+            $this->storeCustomerPoints($customerId);
         }
     }
 
     /**
-     * @return array{eligible_amount: float, points: int, remainder_amount: float}
+     * @return array{eligible_amount: float, automatic_points: int, manual_adjustment: int, points: int, remainder_amount: float}
      */
     public function getTotals(int $customerId): array
     {
@@ -72,12 +68,48 @@ class Customer_loyalty_ledger extends Model
             ->get()
             ->getRow()
             ->eligible_amount ?? 0);
+        $automaticPoints = (int) floor($eligibleAmount / self::POINT_AMOUNT);
+        $manualAdjustment = model(Customer_loyalty_adjustment::class)->getTotalAdjustment($customerId);
 
         return [
-            'eligible_amount'  => $eligibleAmount,
-            'points'           => (int) floor($eligibleAmount / self::POINT_AMOUNT),
-            'remainder_amount' => fmod($eligibleAmount, self::POINT_AMOUNT),
+            'eligible_amount'    => $eligibleAmount,
+            'automatic_points'  => $automaticPoints,
+            'manual_adjustment' => $manualAdjustment,
+            'points'            => max(0, $automaticPoints + $manualAdjustment),
+            'remainder_amount'  => fmod($eligibleAmount, self::POINT_AMOUNT),
         ];
+    }
+
+    public function setManualPointsTarget(
+        int $customerId,
+        int $requestedPoints,
+        int $employeeId,
+        ?string $reason = null
+    ): bool {
+        if ($requestedPoints < 0) {
+            throw new RuntimeException('Customer loyalty points cannot be negative.');
+        }
+
+        $this->db->transStart();
+        $this->lockCustomer($customerId);
+
+        $currentTotals = $this->getTotals($customerId);
+        $pointsDelta = $requestedPoints - $currentTotals['points'];
+
+        if ($pointsDelta !== 0) {
+            model(Customer_loyalty_adjustment::class)->insertAdjustment(
+                $customerId,
+                $pointsDelta,
+                $requestedPoints,
+                $employeeId,
+                $reason
+            );
+        }
+
+        $this->storeCustomerPoints($customerId);
+        $this->db->transComplete();
+
+        return $this->db->transStatus();
     }
 
     private function isSaleEligible(array $sale): bool
@@ -186,5 +218,14 @@ class Customer_loyalty_ledger extends Model
             'SELECT person_id FROM `' . $this->db->prefixTable('customers') . '` WHERE person_id = ? FOR UPDATE',
             [$customerId]
         );
+    }
+
+    private function storeCustomerPoints(int $customerId): void
+    {
+        $totals = $this->getTotals($customerId);
+
+        $this->db->table('customers')
+            ->where('person_id', $customerId)
+            ->update(['points' => $totals['points']]);
     }
 }
