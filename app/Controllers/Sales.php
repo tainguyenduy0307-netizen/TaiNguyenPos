@@ -473,29 +473,7 @@ class Sales extends Secure_Controller
                     $this->sale_lib->addPayment($paymentType, $amountTendered);
                 }
             } elseif ($paymentType === lang('Sales.rewards')) {
-                $customerId = $this->sale_lib->get_customer();
-                $packageId = $this->customer->get_info($customerId)->package_id;
-                if (!empty($packageId)) {
-                    $points = $this->customer->get_info($customerId)->points;
-                    $points = ($points == null ? 0 : $points);
-
-                    $payments = $this->sale_lib->getPayments();
-                    $currentPaymentsWithRewards = isset($payments[$paymentType]) ? $payments[$paymentType]['payment_amount'] : 0;
-                    $curRewardsValue = $points;
-
-                    if (($curRewardsValue - $currentPaymentsWithRewards) <= 0) {
-                        $data['error'] = lang('Sales.rewards_remaining_balance') . to_currency($curRewardsValue);
-                    } else {
-                        $newRewardValue = $points - $this->sale_lib->get_amount_due();
-                        $newRewardValue = max($newRewardValue, 0);
-                        $this->sale_lib->set_rewards_remainder($newRewardValue);
-                        $newRewardValue = to_currency($newRewardValue);
-                        $data['warning'] = lang('Sales.rewards_remaining_balance') . $newRewardValue;
-                        $amountTendered = min($this->sale_lib->get_amount_due(), $points);
-
-                        $this->sale_lib->addPayment($paymentType, $amountTendered);
-                    }
-                }
+                $data['error'] = lang('Sales.not_authorized');
             } elseif ($paymentType === lang('Sales.cash')) {
                 $amountDue = $this->sale_lib->get_total();
                 $salesTotal = $this->sale_lib->get_total(false);
@@ -1299,7 +1277,7 @@ class Sales extends Secure_Controller
         $data['email_receipt'] = $this->sale_lib->is_email_receipt();
 
         if ($customer_info && $this->config['customer_reward_enable']) {
-            $data['payment_options'] = $this->sale->get_payment_options(true, true);
+            $data['payment_options'] = $this->sale->get_payment_options(true, false);
         } else {
             $data['payment_options'] = $this->sale->get_payment_options();
         }
@@ -1423,7 +1401,7 @@ class Sales extends Secure_Controller
         $data['balance_due'] = $balance_due != 0;
 
         // Don't allow gift card to be a payment option in a sale transaction edit because it's a complex change
-        $payment_options = $this->sale->get_payment_options(false);
+        $payment_options = $this->sale->get_payment_options(false, false);
 
         if ($this->sale_lib->reset_cash_rounding()) {
             $payment_options[lang('Sales.cash_adjustment')] = lang('Sales.cash_adjustment');

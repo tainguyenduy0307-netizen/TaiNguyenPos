@@ -9,6 +9,7 @@ use App\Libraries\Sale_lib;
 use Config\OSPOS;
 use Config\Services;
 use ReflectionException;
+use RuntimeException;
 
 /**
  * Sale class
@@ -473,6 +474,11 @@ class Sale extends Model
             return false;
         }
 
+        if (!empty($sale_data['payments'])) {
+            $this->rejectRewardPayments($sale_data['payments']);
+        }
+
+        $previousCustomerId = $this->getSaleCustomerId((int) $sale_id);
         $builder = $this->db->table('sales');
         $builder->where('sale_id', $sale_id);
         $builder->where('business_unit_id', $businessUnitId);
@@ -530,6 +536,12 @@ class Sale extends Model
                 }
             }
 
+            $this->syncCustomerLoyalty((int) $sale_id, $previousCustomerId);
+            $this->db->transComplete();
+            $success &= $this->db->transStatus();
+        } elseif ($success) {
+            $this->db->transStart();
+            $this->syncCustomerLoyalty((int) $sale_id, $previousCustomerId);
             $this->db->transComplete();
             $success &= $this->db->transStatus();
         }
@@ -570,6 +582,9 @@ class Sale extends Model
             return -1;    // TODO: Replace -1 with a constant
         }
 
+        $this->rejectRewardPayments($payments ?? []);
+        $previousCustomerId = $saleId == NEW_ENTRY ? null : $this->getSaleCustomerId($saleId);
+
         if ($saleId != NEW_ENTRY) {
             if (!$this->saleBelongsToBusinessUnit($saleId, $businessUnitId)) {
                 return -1;
@@ -604,18 +619,11 @@ class Sale extends Model
             $builder->update($sales_data);
         }
 
-        $total_amount = 0;
-        $totalAmountUsed = 0;
-
-        foreach ($payments as $payment_id => $payment) {
+        foreach (($payments ?? []) as $payment_id => $payment) {
             if (!empty(strstr($payment['payment_type'], lang('Sales.giftcard')))) {
                 $splitPayment = explode(':', $payment['payment_type']);
                 $currentGiftcardValue = $giftcard->get_giftcard_value($splitPayment[1]);
                 $giftcard->update_giftcard_value($splitPayment[1], $currentGiftcardValue - $payment['payment_amount']);
-            } elseif (!empty(strstr($payment['payment_type'], lang('Sales.rewards')))) {
-                $currentRewardsValue = $customer->get_info($customerId)->points;
-                $customer->update_reward_points_value($customerId, $currentRewardsValue - $payment['payment_amount']);
-                $totalAmountUsed = floatval($totalAmountUsed) + floatval($payment['payment_amount']);
             }
 
             $sales_payments_data = [
@@ -630,11 +638,7 @@ class Sale extends Model
 
             $builder = $this->db->table('sales_payments');
             $builder->insert($sales_payments_data);
-
-            $total_amount = floatval($total_amount) + floatval($payment['payment_amount']) - floatval($payment['cash_refund']);
         }
-
-        $this->save_customer_rewards($customerId, $saleId, $total_amount, $totalAmountUsed);
 
         $customer = $customer->get_info($customerId);
 
@@ -703,6 +707,8 @@ class Sale extends Model
                 $dinner_table->occupy($dinner_table_id);
             }
         }
+
+        $this->syncCustomerLoyalty($saleId, $previousCustomerId);
 
         $this->db->transComplete();
 
@@ -877,7 +883,9 @@ class Sale extends Model
             }
         }
 
+        $previousCustomerId = $this->getSaleCustomerId((int) $sale_id);
         $this->update_sale_status($sale_id, CANCELED);
+        $this->syncCustomerLoyalty((int) $sale_id, $previousCustomerId);
 
         // Execute transaction
         $this->db->transComplete();
@@ -975,7 +983,7 @@ class Sale extends Model
     /**
      * Gets sale payment options
      */
-    public function get_payment_options(bool $giftcard = true, bool $reward_points = true): array
+    public function get_payment_options(bool $giftcard = true, bool $reward_points = false): array
     {
         $payments = get_payment_options();
 
@@ -1416,7 +1424,9 @@ class Sale extends Model
             $dinner_table->release($dinner_table_id);
         }
 
+        $previousCustomerId = $this->getSaleCustomerId($sale_id);
         $this->update_sale_status($sale_id, CANCELED);
+        $this->syncCustomerLoyalty($sale_id, $previousCustomerId);
 
         $this->db->transComplete();
 
@@ -1507,36 +1517,27 @@ class Sale extends Model
             ->countAllResults() === 1;
     }
 
-    /**
-     * @param int $customer_id
-     * @param int $sale_id
-     * @param float $total_amount
-     * @param float $total_amount_used
-     */
-    private function save_customer_rewards(int $customer_id, int $sale_id, float $total_amount, float $total_amount_used): void
+    private function syncCustomerLoyalty(int $saleId, ?int $previousCustomerId = null): void
     {
-        $config = config(OSPOS::class)->settings;
+        model(Customer_loyalty_ledger::class)->syncSale($saleId, $previousCustomerId);
+    }
 
-        if (!empty($customer_id) && $config['customer_reward_enable']) {
-            $customer = model(Customer::class);
-            $customer_rewards = model(Customer_rewards::class);
-            $rewards = model(Rewards::class);
+    private function getSaleCustomerId(int $saleId): ?int
+    {
+        $row = $this->db->table('sales')
+            ->select('customer_id')
+            ->where('sale_id', $saleId)
+            ->get()
+            ->getRow();
 
-            $package_id = $customer->get_info($customer_id)->package_id;
+        return $row === null || $row->customer_id === null ? null : (int) $row->customer_id;
+    }
 
-            if (!empty($package_id)) {
-                $points_percent = $customer_rewards->get_points_percent($package_id);
-                $points = $customer->get_info($customer_id)->points;
-                $points = ($points == null ? 0 : $points);
-                $points_percent = ($points_percent == null ? 0 : $points_percent);
-                $total_amount_earned = ($total_amount * $points_percent / 100);
-                $points = $points + $total_amount_earned;
-
-                $customer->update_reward_points_value($customer_id, $points);
-
-                $rewards_data = ['sale_id' => $sale_id, 'earned' => $total_amount_earned, 'used' => $total_amount_used];
-
-                $rewards->save_value($rewards_data);
+    private function rejectRewardPayments(array $payments): void
+    {
+        foreach ($payments as $payment) {
+            if (!empty(strstr($payment['payment_type'] ?? '', lang('Sales.rewards')))) {
+                throw new RuntimeException('Reward points payments are disabled.');
             }
         }
     }

@@ -240,7 +240,7 @@ class Customer extends Person
     {
         $builder = $this->db->table('customers');
         $builder->where('person_id', $customer_id);
-        $builder->update(['points' => $value]);
+        $builder->update(['points' => max(0, $value)]);
     }
 
     /**
