@@ -3,7 +3,9 @@
 namespace Tests\Models;
 
 use App\Database\Migrations\AddBusinessUnits;
+use App\Database\Migrations\AddBusinessUnitInventoryQuantities;
 use App\Database\Migrations\AddFixedEmployeeAccountScopes;
+use App\Database\Migrations\AddReceivingsBusinessUnitScope;
 use App\Database\Migrations\AddSalesBusinessUnitScope;
 use App\Libraries\Sale_lib;
 use App\Models\Sale;
@@ -14,6 +16,8 @@ use RuntimeException;
 require_once APPPATH . 'Database/Migrations/20260724000000_AddFixedEmployeeAccountScopes.php';
 require_once APPPATH . 'Database/Migrations/20260725000000_AddBusinessUnits.php';
 require_once APPPATH . 'Database/Migrations/20260725000001_AddSalesBusinessUnitScope.php';
+require_once APPPATH . 'Database/Migrations/20260725000002_AddReceivingsBusinessUnitScope.php';
+require_once APPPATH . 'Database/Migrations/20260725000003_AddBusinessUnitInventoryQuantities.php';
 
 class SalesBusinessUnitScopeTest extends CIUnitTestCase
 {
@@ -42,6 +46,8 @@ class SalesBusinessUnitScopeTest extends CIUnitTestCase
         (new AddFixedEmployeeAccountScopes())->up();
         (new AddBusinessUnits())->up();
         (new AddSalesBusinessUnitScope())->up();
+        (new AddReceivingsBusinessUnitScope())->up();
+        (new AddBusinessUnitInventoryQuantities())->up();
 
         $this->dropSaleTempTables();
         $this->itemId = $this->createTestItem();
@@ -470,8 +476,26 @@ class SalesBusinessUnitScopeTest extends CIUnitTestCase
 
     private function removeTestItems(): void
     {
-        db_connect()
-            ->table('items')
+        $db = db_connect();
+        $itemIds = array_column(
+            $db->table('items')
+                ->select('item_id')
+                ->like('item_number', self::TEST_PREFIX, 'after')
+                ->get()
+                ->getResultArray(),
+            'item_id'
+        );
+
+        if ($itemIds !== [] && $db->tableExists('business_unit_item_quantities')) {
+            $db->table('business_unit_item_quantities')->whereIn('item_id', $itemIds)->delete();
+        }
+
+        if ($itemIds !== []) {
+            $db->table('inventory')->whereIn('trans_items', $itemIds)->delete();
+            $db->table('item_quantities')->whereIn('item_id', $itemIds)->delete();
+        }
+
+        $db->table('items')
             ->like('item_number', self::TEST_PREFIX, 'after')
             ->delete();
     }

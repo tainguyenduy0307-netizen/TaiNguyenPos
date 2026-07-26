@@ -3,8 +3,10 @@
 namespace Tests\Models;
 
 use App\Database\Migrations\AddBusinessUnits;
+use App\Database\Migrations\AddBusinessUnitInventoryQuantities;
 use App\Database\Migrations\AddFixedEmployeeAccountScopes;
 use App\Database\Migrations\AddReceivingsBusinessUnitScope;
+use App\Database\Migrations\AddSalesBusinessUnitScope;
 use App\Libraries\Receiving_lib;
 use App\Models\Receiving;
 use CodeIgniter\Test\CIUnitTestCase;
@@ -13,7 +15,9 @@ use RuntimeException;
 
 require_once APPPATH . 'Database/Migrations/20260724000000_AddFixedEmployeeAccountScopes.php';
 require_once APPPATH . 'Database/Migrations/20260725000000_AddBusinessUnits.php';
+require_once APPPATH . 'Database/Migrations/20260725000001_AddSalesBusinessUnitScope.php';
 require_once APPPATH . 'Database/Migrations/20260725000002_AddReceivingsBusinessUnitScope.php';
+require_once APPPATH . 'Database/Migrations/20260725000003_AddBusinessUnitInventoryQuantities.php';
 
 class ReceivingsBusinessUnitScopeTest extends CIUnitTestCase
 {
@@ -42,7 +46,9 @@ class ReceivingsBusinessUnitScopeTest extends CIUnitTestCase
 
         (new AddFixedEmployeeAccountScopes())->up();
         (new AddBusinessUnits())->up();
+        (new AddSalesBusinessUnitScope())->up();
         (new AddReceivingsBusinessUnitScope())->up();
+        (new AddBusinessUnitInventoryQuantities())->up();
 
         $this->itemId = $this->createTestItem();
     }
@@ -204,14 +210,17 @@ class ReceivingsBusinessUnitScopeTest extends CIUnitTestCase
         $this->assertSame(self::TEST_PREFIX . 'OWN_UPDATE', $this->getReceivingComment($dayReceivingId));
     }
 
-    public function testOwnScopeReceivingStillUpdatesInventoryAndQuantity(): void
+    public function testOwnScopeReceivingStillUpdatesInventoryAndScopedQuantity(): void
     {
         $this->loginAsUsername('NguyenDuyTai');
 
-        $quantityBefore = $this->getItemQuantity();
+        $businessUnitId = $this->getBusinessUnitId('DAY');
+        $legacyQuantityBefore = $this->getItemQuantity();
+        $scopedQuantityBefore = $this->getScopedItemQuantity($businessUnitId);
         $receivingId = $this->saveReceivingThroughModel();
 
-        $this->assertSame($quantityBefore + 1.0, $this->getItemQuantity());
+        $this->assertSame($legacyQuantityBefore, $this->getItemQuantity());
+        $this->assertSame($scopedQuantityBefore + 1.0, $this->getScopedItemQuantity($businessUnitId));
         $this->assertSame(1, $this->getInventoryLedgerCount('RECV ' . $receivingId));
     }
 
@@ -390,6 +399,20 @@ class ReceivingsBusinessUnitScopeTest extends CIUnitTestCase
             ->quantity;
     }
 
+    private function getScopedItemQuantity(int $businessUnitId): float
+    {
+        $row = db_connect()
+            ->table('business_unit_item_quantities')
+            ->select('quantity')
+            ->where('business_unit_id', $businessUnitId)
+            ->where('item_id', $this->itemId)
+            ->where('location_id', 1)
+            ->get()
+            ->getRow();
+
+        return $row === null ? 0.0 : (float) $row->quantity;
+    }
+
     private function getInventoryLedgerCount(string $comment): int
     {
         return db_connect()
@@ -472,6 +495,10 @@ class ReceivingsBusinessUnitScopeTest extends CIUnitTestCase
 
         if ($itemIds === []) {
             return;
+        }
+
+        if ($db->tableExists('business_unit_item_quantities')) {
+            $db->table('business_unit_item_quantities')->whereIn('item_id', $itemIds)->delete();
         }
 
         $db->table('inventory')->whereIn('trans_items', $itemIds)->delete();

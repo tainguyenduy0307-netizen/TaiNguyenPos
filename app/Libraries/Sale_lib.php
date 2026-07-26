@@ -2,18 +2,19 @@
 
 namespace app\Libraries;
 
+use App\Libraries\BusinessUnitInventoryService;
 use App\Models\Attribute;
 use App\Models\Customer;
 use App\Models\Dinner_table;
 use App\Models\Item;
 use App\Models\Item_kit_items;
-use App\Models\Item_quantity;
 use App\Models\Item_taxes;
 use App\Models\Enums\Rounding_mode;
 use App\Models\Sale;
 use CodeIgniter\Session\Session;
 use App\Models\Stock_location;
 use Config\OSPOS;
+use Config\Services;
 use ReflectionException;
 
 /**
@@ -41,7 +42,7 @@ class Sale_lib
     private Dinner_table $dinner_table;
     private Item $item;
     private Item_kit_items $item_kit_items;
-    private Item_quantity $item_quantity;
+    private BusinessUnitInventoryService $businessUnitInventory;
     private Item_taxes $item_taxes;
     private Sale $sale;
     private Stock_location $stock_location;
@@ -57,7 +58,7 @@ class Sale_lib
         $this->dinner_table = model(Dinner_table::class);
         $this->item = model(Item::class);
         $this->item_kit_items = model(Item_kit_items::class);
-        $this->item_quantity = model(Item_quantity::class);
+        $this->businessUnitInventory = Services::businessUnitInventory();
         $this->item_taxes = model(Item_taxes::class);
         $this->sale = model(Sale::class);
         $this->stock_location = model(Stock_location::class);
@@ -1160,7 +1161,7 @@ class Sale_lib
                     'quantity'              => $quantity,
                     'discount'              => $applied_discount,
                     'discount_type'         => $discount_type,
-                    'in_stock'              => $this->item_quantity->get_item_quantity($item_id, $item_location)->quantity,
+                    'in_stock'              => $this->businessUnitInventory->getCurrentQuantity($item_id, $item_location) ?? 0.0,
                     'price'                 => $price,
                     'cost_price'            => $cost_price,
                     'total'                 => $total,
@@ -1199,12 +1200,12 @@ class Sale_lib
             $item_info = $this->item->get_info_by_id_or_number($item_id);
 
             if ($item_info->stock_type == HAS_STOCK) {    // TODO: === ?
-                $item_quantity = $this->item_quantity->get_item_quantity($item_id, $item_location)->quantity;
+                $itemQuantity = $this->businessUnitInventory->getCurrentQuantity($item_id, $item_location) ?? 0.0;
                 $quantity_added = $this->get_quantity_already_added($item_id, $item_location);
 
-                if ($item_quantity - $quantity_added < 0) {
+                if ($itemQuantity - $quantity_added < 0) {
                     return lang('Sales.quantity_less_than_zero');
-                } elseif ($item_quantity - $quantity_added < $item_info->reorder_level) {
+                } elseif ($itemQuantity - $quantity_added < $item_info->reorder_level) {
                     return lang('Sales.quantity_less_than_reorder_level');
                 }
             }

@@ -564,8 +564,7 @@ class Sale extends Model
         $giftcard = model(Giftcard::class);
         $inventory = model('Inventory');
         $item = model(Item::class);
-
-        $item_quantity = model(Item_quantity::class);
+        $businessUnitInventory = Services::businessUnitInventory();
 
         if (count($items) == 0) {    // TODO: ===
             return -1;    // TODO: Replace -1 with a constant
@@ -666,17 +665,7 @@ class Sale extends Model
 
             if ($cur_item_info->stock_type == HAS_STOCK && $saleStatus == COMPLETED) {    // TODO: === ?
                 // Update stock quantity if item type is a standard stock item and the sale is a standard sale
-                $item_quantity_data = $item_quantity->get_item_quantity($item_data['item_id'], $item_data['item_location']);
-
-                $item_quantity->save_value(
-                    [
-                        'quantity'    => $item_quantity_data->quantity - $item_data['quantity'],
-                        'item_id'     => $item_data['item_id'],
-                        'location_id' => $item_data['item_location']
-                    ],
-                    $item_data['item_id'],
-                    $item_data['item_location']
-                );
+                $businessUnitInventory->changeCurrentQuantity($item_data['item_id'], $item_data['item_location'], -$item_data['quantity']);
 
                 // If an items was deleted but later returned it's restored with this rule
                 if ($item_data['quantity'] < 0) {
@@ -691,7 +680,8 @@ class Sale extends Model
                     'trans_user'      => $employeeId,
                     'trans_location'  => $item_data['item_location'],
                     'trans_comment'   => $sale_remarks,
-                    'trans_inventory' => -$item_data['quantity']
+                    'trans_inventory' => -$item_data['quantity'],
+                    'business_unit_id' => $businessUnitId
                 ];
 
                 $inventory->insert($inv_data, false);
@@ -844,7 +834,9 @@ class Sale extends Model
      */
     public function delete($sale_id = null, bool $purge = false, bool $update_inventory = true, $employee_id = null): bool
     {
-        if (!$this->saleBelongsToBusinessUnit((int) $sale_id, $this->getCurrentBusinessUnitId())) {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+
+        if (!$this->saleBelongsToBusinessUnit((int) $sale_id, $businessUnitId)) {
             return false;
         }
 
@@ -858,7 +850,7 @@ class Sale extends Model
             // Get array with all the items involved in the sale to update the inventory tracking
             $inventory = model('Inventory');
             $item = model(Item::class);
-            $item_quantity = model(Item_quantity::class);
+            $businessUnitInventory = Services::businessUnitInventory();
 
             $items = $this->get_sale_items($sale_id)->getResultArray();
 
@@ -873,13 +865,14 @@ class Sale extends Model
                         'trans_user'      => $employee_id,
                         'trans_comment'   => 'Deleting sale ' . $sale_id,
                         'trans_location'  => $item_data['item_location'],
-                        'trans_inventory' => $item_data['quantity_purchased']
+                        'trans_inventory' => $item_data['quantity_purchased'],
+                        'business_unit_id' => $businessUnitId
                     ];
                     // Update inventory
                     $inventory->insert($inv_data, false);
 
                     // Update quantities
-                    $item_quantity->change_quantity($item_data['item_id'], $item_data['item_location'], $item_data['quantity_purchased']);
+                    $businessUnitInventory->changeCurrentQuantity($item_data['item_id'], $item_data['item_location'], $item_data['quantity_purchased']);
                 }
             }
         }

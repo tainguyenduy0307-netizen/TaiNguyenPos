@@ -8,7 +8,11 @@ use App\Database\Migrations\AddFixedEmployeeAccountScopes;
 use App\Database\Migrations\AddReceivingsBusinessUnitScope;
 use App\Database\Migrations\AddSalesBusinessUnitScope;
 use App\Libraries\BusinessUnitInventoryService;
+use App\Libraries\Receiving_lib;
+use App\Libraries\Sale_lib;
 use App\Models\Business_unit_item_quantity;
+use App\Models\Receiving;
+use App\Models\Sale;
 use CodeIgniter\Test\CIUnitTestCase;
 use Config\Services;
 use RuntimeException;
@@ -177,6 +181,148 @@ class BusinessUnitInventoryQuantityTest extends CIUnitTestCase
         (new BusinessUnitInventoryService())->changeCurrentQuantity($itemId, 1, 1.0);
     }
 
+    public function testSalesWriterReaderAndDeleteUseScopedInventoryOnly(): void
+    {
+        $itemId = $this->createTestItemWithLegacyQuantity(50.0);
+
+        (new AddBusinessUnitInventoryQuantities())->up();
+
+        $model = model(Business_unit_item_quantity::class);
+        $dayBusinessUnitId = $this->getBusinessUnitId('DAY');
+        $nightBusinessUnitId = $this->getBusinessUnitId('NIGHT');
+        $model->setQuantity($dayBusinessUnitId, $itemId, 1, 10.0);
+        $model->setQuantity($nightBusinessUnitId, $itemId, 1, 3.0);
+
+        $this->loginAsUsername('NguyenDuyTai');
+        Services::session()->set('business_unit_id', $nightBusinessUnitId);
+        $_POST['business_unit_id'] = (string) $nightBusinessUnitId;
+
+        try {
+            $saleId = $this->saveSaleThroughModel($itemId, '2', 'NguyenDuyTai');
+        } finally {
+            unset($_POST['business_unit_id']);
+        }
+
+        $this->assertSame(8.0, $model->getQuantity($dayBusinessUnitId, $itemId, 1));
+        $this->assertSame(3.0, $model->getQuantity($nightBusinessUnitId, $itemId, 1));
+        $this->assertSame(50.0, $this->getLegacyQuantity($itemId, 1));
+        $this->assertSame($dayBusinessUnitId, $this->getInventoryLedgerBusinessUnitId('POS ' . $saleId));
+
+        $saleItem = (string) $itemId;
+        $discount = '0.0';
+        $saleLib = new Sale_lib();
+        $this->assertTrue($saleLib->add_item($saleItem, 1, '1', $discount));
+        $cart = $saleLib->get_cart();
+        $this->assertSame(8.0, (float) reset($cart)['in_stock']);
+
+        $this->assertTrue(model(Sale::class)->delete($saleId, false, true, $this->getEmployeeId('NguyenDuyTai')));
+        $this->assertSame(10.0, $model->getQuantity($dayBusinessUnitId, $itemId, 1));
+        $this->assertSame(3.0, $model->getQuantity($nightBusinessUnitId, $itemId, 1));
+        $this->assertSame(50.0, $this->getLegacyQuantity($itemId, 1));
+        $this->assertSame($dayBusinessUnitId, $this->getInventoryLedgerBusinessUnitId('Deleting sale ' . $saleId));
+
+        $this->loginAsUsername('NguyenDuyTai1');
+        $nightSaleId = $this->saveSaleThroughModel($itemId, '1', 'NguyenDuyTai1');
+
+        $this->assertSame(10.0, $model->getQuantity($dayBusinessUnitId, $itemId, 1));
+        $this->assertSame(2.0, $model->getQuantity($nightBusinessUnitId, $itemId, 1));
+        $this->assertSame(50.0, $this->getLegacyQuantity($itemId, 1));
+        $this->assertSame($nightBusinessUnitId, $this->getInventoryLedgerBusinessUnitId('POS ' . $nightSaleId));
+
+        $this->assertTrue(model(Sale::class)->delete($nightSaleId, false, true, $this->getEmployeeId('NguyenDuyTai1')));
+        $this->assertSame(10.0, $model->getQuantity($dayBusinessUnitId, $itemId, 1));
+        $this->assertSame(3.0, $model->getQuantity($nightBusinessUnitId, $itemId, 1));
+        $this->assertSame($nightBusinessUnitId, $this->getInventoryLedgerBusinessUnitId('Deleting sale ' . $nightSaleId));
+    }
+
+    public function testSaleOutOfStockUsesScopedQuantityWithoutLegacyFallback(): void
+    {
+        $itemId = $this->createTestItemWithLegacyQuantity(50.0);
+
+        (new AddBusinessUnitInventoryQuantities())->up();
+
+        model(Business_unit_item_quantity::class)->setQuantity($this->getBusinessUnitId('DAY'), $itemId, 1, 0.0);
+        $this->loginAsUsername('NguyenDuyTai');
+
+        $saleItem = (string) $itemId;
+        $discount = '0.0';
+        $saleLib = new Sale_lib();
+
+        $this->assertTrue($saleLib->add_item($saleItem, 1, '1', $discount));
+        $this->assertSame(lang('Sales.quantity_less_than_zero'), $saleLib->out_of_stock($itemId, 1));
+    }
+
+    public function testReceivingsWriterReaderDeleteAndRequisitionUseScopedInventoryOnly(): void
+    {
+        $itemId = $this->createTestItemWithLegacyQuantity(50.0);
+        $secondLocationId = $this->createTestLocation();
+
+        (new AddBusinessUnitInventoryQuantities())->up();
+
+        $model = model(Business_unit_item_quantity::class);
+        $dayBusinessUnitId = $this->getBusinessUnitId('DAY');
+        $nightBusinessUnitId = $this->getBusinessUnitId('NIGHT');
+        $model->setQuantity($dayBusinessUnitId, $itemId, 1, 10.0);
+        $model->setQuantity($dayBusinessUnitId, $itemId, $secondLocationId, 1.0);
+        $model->setQuantity($nightBusinessUnitId, $itemId, 1, 3.0);
+
+        $this->loginAsUsername('NguyenDuyTai');
+        $receivingId = $this->saveReceivingThroughModel($itemId, '4', '1', 1);
+
+        $this->assertSame(14.0, $model->getQuantity($dayBusinessUnitId, $itemId, 1));
+        $this->assertSame(3.0, $model->getQuantity($nightBusinessUnitId, $itemId, 1));
+        $this->assertSame(50.0, $this->getLegacyQuantity($itemId, 1));
+        $this->assertSame($dayBusinessUnitId, $this->getInventoryLedgerBusinessUnitId('RECV ' . $receivingId));
+
+        $receivingLib = new Receiving_lib();
+        $this->assertTrue($receivingLib->add_item((string) $itemId, 1, 1));
+        $cart = $receivingLib->get_cart();
+        $this->assertSame(14.0, (float) reset($cart)['in_stock']);
+
+        $this->assertTrue(model(Receiving::class)->delete_value($receivingId, $this->getEmployeeId('NguyenDuyTai')));
+        $this->assertSame(10.0, $model->getQuantity($dayBusinessUnitId, $itemId, 1));
+        $this->assertSame(3.0, $model->getQuantity($nightBusinessUnitId, $itemId, 1));
+        $this->assertSame(50.0, $this->getLegacyQuantity($itemId, 1));
+        $this->assertSame($dayBusinessUnitId, $this->getInventoryLedgerBusinessUnitId('Deleting receiving ' . $receivingId));
+
+        $this->loginAsUsername('NguyenDuyTai1');
+        $nightReceivingId = $this->saveReceivingThroughModel($itemId, '2', '1', 1, 'NguyenDuyTai1');
+
+        $this->assertSame(10.0, $model->getQuantity($dayBusinessUnitId, $itemId, 1));
+        $this->assertSame(5.0, $model->getQuantity($nightBusinessUnitId, $itemId, 1));
+        $this->assertSame(50.0, $this->getLegacyQuantity($itemId, 1));
+        $this->assertSame($nightBusinessUnitId, $this->getInventoryLedgerBusinessUnitId('RECV ' . $nightReceivingId));
+
+        $nightReceivingLib = new Receiving_lib();
+        $nightReceivingLib->empty_cart();
+        $this->assertTrue($nightReceivingLib->add_item((string) $itemId, 1, 1));
+        $cart = $nightReceivingLib->get_cart();
+        $this->assertSame(5.0, (float) reset($cart)['in_stock']);
+
+        $this->assertTrue(model(Receiving::class)->delete_value($nightReceivingId, $this->getEmployeeId('NguyenDuyTai1')));
+        $this->assertSame(10.0, $model->getQuantity($dayBusinessUnitId, $itemId, 1));
+        $this->assertSame(3.0, $model->getQuantity($nightBusinessUnitId, $itemId, 1));
+        $this->assertSame($nightBusinessUnitId, $this->getInventoryLedgerBusinessUnitId('Deleting receiving ' . $nightReceivingId));
+
+        $this->loginAsUsername('NguyenDuyTai');
+        $requisitionId = model(Receiving::class)->save_value(
+            [
+                0 => $this->receivingItemData($itemId, '2', '1', $secondLocationId, 0),
+                1 => $this->receivingItemData($itemId, '-2', '1', 1, 1),
+            ],
+            NEW_ENTRY,
+            $this->getEmployeeId('NguyenDuyTai'),
+            self::TEST_PREFIX . 'REQUISITION',
+            self::TEST_PREFIX . uniqid('REQ_', false),
+            'Cash'
+        );
+
+        $this->assertSame(8.0, $model->getQuantity($dayBusinessUnitId, $itemId, 1));
+        $this->assertSame(3.0, $model->getQuantity($dayBusinessUnitId, $itemId, $secondLocationId));
+        $this->assertSame(3.0, $model->getQuantity($nightBusinessUnitId, $itemId, 1));
+        $this->assertSame($dayBusinessUnitId, $this->getInventoryLedgerBusinessUnitId('RECV ' . $requisitionId));
+    }
+
     private function createTestItemWithLegacyQuantity(float $quantity): int
     {
         $itemNumber = self::TEST_PREFIX . uniqid('ITEM_', false);
@@ -257,6 +403,91 @@ class BusinessUnitInventoryQuantityTest extends CIUnitTestCase
             'trans_location'  => 1,
             'trans_inventory' => $quantity,
         ]);
+    }
+
+    private function saveSaleThroughModel(int $itemId, string $quantity, string $username): int
+    {
+        $saleStatus = (string) COMPLETED;
+        $items = [
+            0 => [
+                'item_id'      => $itemId,
+                'line'         => 0,
+                'description'  => self::TEST_PREFIX . 'SALE_ITEM',
+                'serialnumber' => '',
+                'quantity'     => $quantity,
+                'discount'     => '0',
+                'discount_type'=> PERCENT,
+                'cost_price'   => '1.00',
+                'price'        => '2.00',
+                'item_location'=> 1,
+                'print_option' => PRINT_ALL,
+            ],
+        ];
+        $payments = [];
+        $taxes = [[], []];
+
+        return model(Sale::class)->save_value(
+            NEW_ENTRY,
+            $saleStatus,
+            $items,
+            NEW_ENTRY,
+            $this->getEmployeeId($username),
+            self::TEST_PREFIX . 'SALE_FLOW',
+            self::TEST_PREFIX . uniqid('INV_', false),
+            null,
+            null,
+            SALE_TYPE_POS,
+            $payments,
+            null,
+            $taxes
+        );
+    }
+
+    private function saveReceivingThroughModel(
+        int $itemId,
+        string $quantity,
+        string $receivingQuantity,
+        int $locationId,
+        string $username = 'NguyenDuyTai'
+    ): int
+    {
+        return model(Receiving::class)->save_value(
+            [0 => $this->receivingItemData($itemId, $quantity, $receivingQuantity, $locationId, 0)],
+            NEW_ENTRY,
+            $this->getEmployeeId($username),
+            self::TEST_PREFIX . 'RECEIVING_FLOW',
+            self::TEST_PREFIX . uniqid('REF_', false),
+            'Cash'
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function receivingItemData(int $itemId, string $quantity, string $receivingQuantity, int $locationId, int $line): array
+    {
+        return [
+            'item_id'            => $itemId,
+            'line'               => $line,
+            'description'        => self::TEST_PREFIX . 'RECEIVING_ITEM',
+            'serialnumber'       => '',
+            'quantity'           => $quantity,
+            'receiving_quantity' => $receivingQuantity,
+            'discount'           => '0',
+            'discount_type'      => PERCENT,
+            'price'              => '2.00',
+            'item_location'      => $locationId,
+        ];
+    }
+
+    private function createTestLocation(): int
+    {
+        db_connect()->table('stock_locations')->insert([
+            'location_name' => self::TEST_PREFIX . uniqid('LOCATION_', false),
+            'deleted'       => 0,
+        ]);
+
+        return (int) db_connect()->insertID();
     }
 
     private function getLegacyQuantity(int $itemId, int $locationId): float
@@ -390,6 +621,7 @@ class BusinessUnitInventoryQuantityTest extends CIUnitTestCase
         );
 
         if ($saleIds !== []) {
+            $db->table('inventory')->whereIn('trans_comment', array_map(static fn ($saleId) => 'Deleting sale ' . $saleId, $saleIds))->delete();
             $db->table('inventory')->whereIn('trans_comment', array_map(static fn ($saleId) => 'POS ' . $saleId, $saleIds))->delete();
             $db->table('sales_payments')->whereIn('sale_id', $saleIds)->delete();
             $db->table('sales_items_taxes')->whereIn('sale_id', $saleIds)->delete();
@@ -409,6 +641,7 @@ class BusinessUnitInventoryQuantityTest extends CIUnitTestCase
         );
 
         if ($receivingIds !== []) {
+            $db->table('inventory')->whereIn('trans_comment', array_map(static fn ($receivingId) => 'Deleting receiving ' . $receivingId, $receivingIds))->delete();
             $db->table('inventory')->whereIn('trans_comment', array_map(static fn ($receivingId) => 'RECV ' . $receivingId, $receivingIds))->delete();
             $db->table('receivings_items')->whereIn('receiving_id', $receivingIds)->delete();
             $db->table('receivings')->whereIn('receiving_id', $receivingIds)->delete();
@@ -416,6 +649,24 @@ class BusinessUnitInventoryQuantityTest extends CIUnitTestCase
 
         if ($itemIds !== []) {
             $db->table('items')->whereIn('item_id', $itemIds)->delete();
+        }
+
+        $locationIds = array_column(
+            $db->table('stock_locations')
+                ->select('location_id')
+                ->like('location_name', self::TEST_PREFIX, 'after')
+                ->get()
+                ->getResultArray(),
+            'location_id'
+        );
+
+        if ($locationIds !== [] && $db->tableExists('business_unit_item_quantities')) {
+            $db->table('business_unit_item_quantities')->whereIn('location_id', $locationIds)->delete();
+        }
+
+        if ($locationIds !== []) {
+            $db->table('inventory')->whereIn('trans_location', $locationIds)->delete();
+            $db->table('stock_locations')->whereIn('location_id', $locationIds)->delete();
         }
     }
 

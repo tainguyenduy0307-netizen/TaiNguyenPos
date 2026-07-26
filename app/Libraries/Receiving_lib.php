@@ -2,15 +2,16 @@
 
 namespace app\Libraries;
 
+use App\Libraries\BusinessUnitInventoryService;
 use App\Models\Attribute;
 use App\Models\Item;
 use App\Models\Item_kit_items;
-use App\Models\Item_quantity;
 use App\Models\Receiving;
 use App\Models\Stock_location;
 
 use CodeIgniter\Session\Session;
 use Config\OSPOS;
+use Config\Services;
 
 /**
  * Receiving library
@@ -20,9 +21,9 @@ use Config\OSPOS;
 class Receiving_lib
 {
     private Attribute $attribute;
+    private BusinessUnitInventoryService $businessUnitInventory;
     private Item $item;
     private Item_kit_items $item_kit_items;
-    private Item_quantity $item_quantity;
     private Receiving $receiving;
     private Stock_location $stock_location;
     private Session $session;
@@ -30,9 +31,9 @@ class Receiving_lib
     public function __construct()
     {
         $this->attribute = model(Attribute::class);
+        $this->businessUnitInventory = Services::businessUnitInventory();
         $this->item = model(Item::class);
         $this->item_kit_items = model(Item_kit_items::class);
-        $this->item_quantity = model(Item_quantity::class);
         $this->receiving = model(Receiving::class);
         $this->stock_location = model(Stock_location::class);
 
@@ -337,7 +338,7 @@ class Receiving_lib
                 'quantity'                   => $quantity,
                 'discount'                   => $discount,
                 'discount_type'              => $discountType,
-                'in_stock'                   => $this->item_quantity->get_item_quantity((int) $itemId, $itemLocation)->quantity,
+                'in_stock'                   => $this->businessUnitInventory->getCurrentQuantity((int) $itemId, $itemLocation) ?? 0.0,
                 'price'                      => $price,
                 'receiving_quantity'         => $receivingQuantity,
                 'receiving_quantity_choices' => $receivingQuantityChoices,

@@ -122,7 +122,7 @@ class Receiving extends Model
         $attribute = model(Attribute::class);
         $inventory = model('Inventory');
         $item = model(Item::class);
-        $item_quantity = model(Item_quantity::class);
+        $businessUnitInventory = Services::businessUnitInventory();
         $supplier = model(Supplier::class);
 
         if (count($items) == 0) {
@@ -177,16 +177,7 @@ class Receiving extends Model
             }
 
             // Update stock quantity
-            $item_quantity_value = $item_quantity->get_item_quantity($item_data['item_id'], $item_data['item_location']);
-            $item_quantity->save_value(
-                [
-                    'quantity'    => $item_quantity_value->quantity + $items_received,
-                    'item_id'     => $item_data['item_id'],
-                    'location_id' => $item_data['item_location']
-                ],
-                $item_data['item_id'],
-                $item_data['item_location']
-            );
+            $businessUnitInventory->changeCurrentQuantity($item_data['item_id'], $item_data['item_location'], $items_received);
 
             $recv_remarks = 'RECV ' . $receiving_id;
             $inv_data = [
@@ -195,7 +186,8 @@ class Receiving extends Model
                 'trans_user'      => $employee_id,
                 'trans_location'  => $item_data['item_location'],
                 'trans_comment'   => $recv_remarks,
-                'trans_inventory' => $items_received
+                'trans_inventory' => $items_received,
+                'business_unit_id' => $businessUnitId
             ];
 
             $inventory->insert($inv_data, false);
@@ -241,7 +233,9 @@ class Receiving extends Model
      */
     public function delete_value(int $receiving_id, int $employee_id, bool $update_inventory = true): bool
     {
-        if (!$this->receivingBelongsToBusinessUnit($receiving_id, $this->getCurrentBusinessUnitId())) {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+
+        if (!$this->receivingBelongsToBusinessUnit($receiving_id, $businessUnitId)) {
             return false;
         }
 
@@ -253,7 +247,7 @@ class Receiving extends Model
             $items = $this->get_receiving_items($receiving_id)->getResultArray();
 
             $inventory = model('Inventory');
-            $item_quantity = model(Item_quantity::class);
+            $businessUnitInventory = Services::businessUnitInventory();
 
             foreach ($items as $item) {
                 // Create query to update inventory tracking
@@ -263,13 +257,14 @@ class Receiving extends Model
                     'trans_user'      => $employee_id,
                     'trans_comment'   => 'Deleting receiving ' . $receiving_id,
                     'trans_location'  => $item['item_location'],
-                    'trans_inventory' => $item['quantity_purchased'] * (-$item['receiving_quantity'])
+                    'trans_inventory' => $item['quantity_purchased'] * (-$item['receiving_quantity']),
+                    'business_unit_id' => $businessUnitId
                 ];
                 // Update inventory
                 $inventory->insert($inv_data, false);
 
                 // Update quantities
-                $item_quantity->change_quantity($item['item_id'], $item['item_location'], $item['quantity_purchased'] * (-$item['receiving_quantity']));
+                $businessUnitInventory->changeCurrentQuantity($item['item_id'], $item['item_location'], $item['quantity_purchased'] * (-$item['receiving_quantity']));
             }
         }
 

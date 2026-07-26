@@ -23,7 +23,8 @@ class Inventory extends Model
         'trans_date',
         'trans_comment',
         'trans_inventory',
-        'trans_location'
+        'trans_location',
+        'business_unit_id'
     ];
 
     /**
