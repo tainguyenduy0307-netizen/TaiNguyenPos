@@ -1,0 +1,167 @@
+@page {
+    size: 58mm auto;
+    margin: 0;
+}
+
+@media print {
+    html,
+    body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+    }
+
+    body {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+    }
+
+    .wrapper,
+    .container {
+        width: 58mm !important;
+        min-width: 58mm !important;
+        max-width: 58mm !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+    }
+
+    .print_hide,
+    #control_buttons {
+        display: none !important;
+    }
+}
+
+#receipt_k58_wrapper {
+    box-sizing: border-box;
+    width: 52mm;
+    max-width: 52mm;
+    margin: 0 auto;
+    padding: 1.5mm 0;
+    color: #000;
+    float: none;
+    font-family: Arial, "DejaVu Sans", "Liberation Sans", sans-serif;
+    line-height: 1.22;
+    overflow-wrap: anywhere;
+    text-align: left;
+}
+
+#receipt_k58_wrapper *,
+#receipt_k58_wrapper *::before,
+#receipt_k58_wrapper *::after {
+    box-sizing: border-box;
+}
+
+#receipt_k58_wrapper .k58-header,
+#receipt_k58_wrapper .k58-title,
+#receipt_k58_wrapper .k58-footer {
+    text-align: center;
+}
+
+#receipt_k58_wrapper .k58-company {
+    font-weight: 700;
+    font-size: 15px;
+    line-height: 1.2;
+}
+
+#receipt_k58_wrapper .k58-title {
+    font-weight: 700;
+    font-size: 12.5px;
+    margin: 1mm 0 1.5mm;
+}
+
+#receipt_k58_wrapper .k58-separator {
+    border-top: 0.2mm solid #000;
+    margin: 1.5mm 0;
+}
+
+#receipt_k58_wrapper .k58-line {
+    display: flex;
+    gap: 2mm;
+    justify-content: space-between;
+    width: 100%;
+    margin: 0.35mm 0;
+}
+
+#receipt_k58_wrapper .k58-line span:first-child {
+    min-width: 0;
+}
+
+#receipt_k58_wrapper .k58-line span:last-child {
+    flex-shrink: 0;
+    max-width: 28mm;
+    text-align: right;
+}
+
+#receipt_k58_wrapper .k58-item-header,
+#receipt_k58_wrapper .k58-item-calc {
+    display: grid;
+    grid-template-columns: 1fr 10mm 1fr;
+    width: 100%;
+    table-layout: fixed;
+    column-gap: 1mm;
+}
+
+#receipt_k58_wrapper .k58-item-header {
+    font-weight: 700;
+    margin-bottom: 0.8mm;
+}
+
+#receipt_k58_wrapper .k58-item-header span,
+#receipt_k58_wrapper .k58-item-calc span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+#receipt_k58_wrapper .k58-item-header span:nth-child(2),
+#receipt_k58_wrapper .k58-item-calc span:nth-child(2) {
+    text-align: center;
+}
+
+#receipt_k58_wrapper .k58-item-header span:nth-child(3),
+#receipt_k58_wrapper .k58-item-calc span:nth-child(3) {
+    text-align: right;
+}
+
+#receipt_k58_wrapper .k58-item {
+    margin-bottom: 1.3mm;
+    page-break-inside: avoid;
+}
+
+#receipt_k58_wrapper .k58-item-name,
+#receipt_k58_wrapper .k58-item-note {
+    width: 100%;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+#receipt_k58_wrapper .k58-item-note {
+    font-weight: 400;
+}
+
+#receipt_k58_wrapper .k58-item-note,
+#receipt_k58_wrapper .k58-discount {
+    font-size: 0.92em;
+}
+
+#receipt_k58_wrapper .k58-total {
+    font-weight: 700;
+    font-size: 1.08em;
+}
+
+#receipt_k58_wrapper .k58-amount-words {
+    margin-top: 1mm;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+#receipt_k58_wrapper .k58-footer {
+    font-size: 0.92em;
+    font-style: italic;
+}
+
+#receipt_k58_wrapper table,
+#receipt_k58_wrapper img {
+    max-width: 100%;
+}

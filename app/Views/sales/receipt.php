@@ -14,6 +14,10 @@ $template = $receipt_template_view ?? 'receipt_default';
 
 <?= view('partial/header') ?>
 
+<?php if ($template === 'receipt_k58'): ?>
+    <link rel="stylesheet" href="<?= base_url('css/receipt_k58.css') ?>">
+<?php endif; ?>
+
 <?php
 if (isset($error_message)) {
     echo '<div class="alert alert-dismissible alert-danger">' . $error_message . '</div>';

@@ -111,7 +111,8 @@ class Sale_lib
 
     private const ALLOWED_RECEIPT_TEMPLATES = [
         'receipt_default',
-        'receipt_short'
+        'receipt_short',
+        'receipt_k58'
     ];
 
     public function get_invoice_type_options(): array
