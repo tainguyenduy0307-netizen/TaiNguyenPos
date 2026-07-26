@@ -7,6 +7,7 @@ use App\Database\Migrations\AddBusinessUnits;
 use App\Database\Migrations\AddExpensesBusinessUnitScope;
 use App\Database\Migrations\AddFixedEmployeeAccountScopes;
 use App\Database\Migrations\AddSalesBusinessUnitScope;
+use App\Database\Migrations\GrantAggregateReportAccess;
 use App\Models\Reports\Detailed_sales;
 use App\Models\Reports\Summary_expenses_categories;
 use App\Models\Reports\Summary_payments;
@@ -20,6 +21,7 @@ require_once APPPATH . 'Database/Migrations/20260724000000_AddFixedEmployeeAccou
 require_once APPPATH . 'Database/Migrations/20260725000000_AddBusinessUnits.php';
 require_once APPPATH . 'Database/Migrations/20260725000001_AddSalesBusinessUnitScope.php';
 require_once APPPATH . 'Database/Migrations/20260726000000_AddExpensesBusinessUnitScope.php';
+require_once APPPATH . 'Database/Migrations/20260726000001_GrantAggregateReportAccess.php';
 
 class ReportBusinessUnitScopeTest extends CIUnitTestCase
 {
@@ -52,6 +54,7 @@ class ReportBusinessUnitScopeTest extends CIUnitTestCase
         putenv('POS_FIXED_ACCOUNT_INITIAL_PASSWORD=' . self::INITIAL_PASSWORD);
 
         (new AddFixedEmployeeAccountScopes())->up();
+        (new GrantAggregateReportAccess())->up();
         (new AddBusinessUnits())->up();
         (new AddSalesBusinessUnitScope())->up();
         (new AddExpensesBusinessUnitScope())->up();
@@ -165,6 +168,15 @@ class ReportBusinessUnitScopeTest extends CIUnitTestCase
         }
 
         $this->assertSame([$this->dayBusinessUnitId], $inputs['business_unit_ids']);
+    }
+
+    public function testAggregateCanOpenReportsController(): void
+    {
+        $this->loginAsUsername('NguyenDuyTai2');
+
+        $controller = new Reports();
+
+        $this->assertInstanceOf(Reports::class, $controller);
     }
 
     private function newReportsControllerWithAccountScope(string $accountScope): Reports
@@ -372,6 +384,7 @@ class ReportBusinessUnitScopeTest extends CIUnitTestCase
         $session = Services::session();
         $session->destroy();
         $session->set('person_id', $this->getEmployeeId($username));
+        $session->set('menu_group', 'home');
     }
 
     private function getEmployeeId(string $username): int

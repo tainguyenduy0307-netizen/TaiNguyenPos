@@ -2,7 +2,10 @@
 
 namespace Tests\Controllers;
 
+use App\Controllers\Reports;
 use CodeIgniter\Test\CIUnitTestCase;
+use ReflectionClass;
+use ReflectionMethod;
 
 class ReportsControllerTest extends CIUnitTestCase
 {
@@ -53,5 +56,15 @@ class ReportsControllerTest extends CIUnitTestCase
         $this->assertStringContainsString('has_grant', $constructorCode);
         $this->assertStringContainsString('reports_', $constructorCode);
         $this->assertStringContainsString('submodule_id', $constructorCode);
+    }
+
+    public function testExpenseCategoriesReportUsesSpecificPermission(): void
+    {
+        $controller = (new ReflectionClass(Reports::class))->newInstanceWithoutConstructor();
+        $method = new ReflectionMethod($controller, 'getReportSubmoduleId');
+        $method->setAccessible(true);
+
+        $this->assertSame('expenses_categories', $method->invoke($controller, 'summary_expenses_categories'));
+        $this->assertSame('expenses_categories', $method->invoke($controller, 'graphical_summary_expenses_categories'));
     }
 }

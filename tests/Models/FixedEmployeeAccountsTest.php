@@ -4,12 +4,14 @@ namespace Tests\Models;
 
 use App\Controllers\Secure_Controller;
 use App\Database\Migrations\AddFixedEmployeeAccountScopes;
+use App\Database\Migrations\GrantAggregateReportAccess;
 use App\Models\Employee;
 use CodeIgniter\Test\CIUnitTestCase;
 use Config\Services;
 use RuntimeException;
 
 require_once APPPATH . 'Database/Migrations/20260724000000_AddFixedEmployeeAccountScopes.php';
+require_once APPPATH . 'Database/Migrations/20260726000001_GrantAggregateReportAccess.php';
 
 class FixedEmployeeAccountsTest extends CIUnitTestCase
 {
@@ -26,6 +28,7 @@ class FixedEmployeeAccountsTest extends CIUnitTestCase
         putenv('POS_FIXED_ACCOUNT_INITIAL_PASSWORD=' . self::INITIAL_PASSWORD);
 
         (new AddFixedEmployeeAccountScopes())->up();
+        (new GrantAggregateReportAccess())->up();
     }
 
     protected function tearDown(): void
@@ -74,8 +77,10 @@ class FixedEmployeeAccountsTest extends CIUnitTestCase
     public function testMigrationIsIdempotentForFixedAccounts(): void
     {
         (new AddFixedEmployeeAccountScopes())->up();
+        (new GrantAggregateReportAccess())->up();
 
         $this->assertSame(3, $this->countFixedAccounts());
+        $this->assertSame(1, $this->grantCountForUsername('NguyenDuyTai2', 'reports'));
     }
 
     public function testFixedUsernameAndAccountScopeCannotBeChangedThroughEmployeeSave(): void
@@ -190,7 +195,7 @@ class FixedEmployeeAccountsTest extends CIUnitTestCase
             }
         };
 
-        $this->assertSame([], $controller->allowedModules());
+        $this->assertSame(['reports'], array_column($controller->allowedModules(), 'module_id'));
     }
 
     public function testAggregateHomeGrantUsesHomeMenuGroup(): void
@@ -212,6 +217,55 @@ class FixedEmployeeAccountsTest extends CIUnitTestCase
         (new AddFixedEmployeeAccountScopes())->up();
 
         $this->assertSame('home', $this->getGrantMenuGroup((int)$aggregate->person_id, 'home'));
+    }
+
+    public function testAggregateHasOnlyReadOnlyReportAccess(): void
+    {
+        $aggregate = $this->getEmployeeByUsername('NguyenDuyTai2');
+        $employee = model(Employee::class);
+
+        foreach (['home', 'reports', 'reports_sales', 'reports_payments', 'reports_expenses_categories'] as $permissionId) {
+            $this->assertTrue($employee->has_grant($permissionId, (int)$aggregate->person_id), $permissionId);
+        }
+
+        foreach ([
+            'sales',
+            'receivings',
+            'expenses',
+            'items',
+            'employees',
+            'config',
+            'cashups',
+            'giftcards',
+            'customers',
+            'reports_inventory',
+            'reports_receivings',
+            'reports_items',
+            'reports_customers',
+            'reports_employees',
+            'reports_taxes',
+            'reports_categories',
+        ] as $permissionId) {
+            $this->assertFalse($employee->has_grant($permissionId, (int)$aggregate->person_id), $permissionId);
+        }
+    }
+
+    public function testAggregateReportAccessMigrationIsIdempotentAndRemovesOperationalGrants(): void
+    {
+        $aggregate = $this->getEmployeeByUsername('NguyenDuyTai2');
+        $db = db_connect();
+        $db->table('grants')->insert([
+            'permission_id' => 'sales',
+            'person_id'     => (int)$aggregate->person_id,
+            'menu_group'    => 'home',
+        ]);
+
+        (new GrantAggregateReportAccess())->up();
+        (new GrantAggregateReportAccess())->up();
+
+        $this->assertSame(0, $this->grantCountForUsername('NguyenDuyTai2', 'sales'));
+        $this->assertSame(1, $this->grantCountForUsername('NguyenDuyTai2', 'reports'));
+        $this->assertSame(1, $this->grantCountForUsername('NguyenDuyTai2', 'reports_sales'));
     }
 
     public function testMissingInitialPasswordThrowsBeforeAccountCreation(): void
@@ -281,6 +335,17 @@ class FixedEmployeeAccountsTest extends CIUnitTestCase
             ->getRow();
 
         return $grant->menu_group ?? null;
+    }
+
+    private function grantCountForUsername(string $username, string $permissionId): int
+    {
+        $account = $this->getEmployeeByUsername($username);
+
+        return db_connect()
+            ->table('grants')
+            ->where('person_id', (int)$account->person_id)
+            ->where('permission_id', $permissionId)
+            ->countAllResults();
     }
 
     private function removeFixedAccounts(): void
