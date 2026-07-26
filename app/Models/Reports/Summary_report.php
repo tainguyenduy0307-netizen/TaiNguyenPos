@@ -21,6 +21,7 @@ abstract class Summary_report extends Report
         } else {
             $where .= 'sale_time BETWEEN ' . $this->db->escape(rawurldecode($inputs['start_date'])) . ' AND ' . $this->db->escape(rawurldecode($inputs['end_date']));
         }
+        $where = '(' . $where . ') AND ' . $this->getBusinessUnitScopeWhere($inputs, 'sales.business_unit_id');
 
         $decimals = totals_decimals();
 
@@ -92,13 +93,16 @@ abstract class Summary_report extends Report
      */
     private function __common_from(BaseBuilder &$builder): void    // TODO: hungarian notation
     {
-        $builder->join('sales AS sales', 'sales_items.sale_id = sales.sale_id', 'inner');
+        $builder->join($this->db->prefixTable('sales') . ' AS sales', '`sales_items`.`sale_id` = `sales`.`sale_id`', 'inner', false);
         $builder->join(
-            'sales_items_taxes_temp AS sales_items_taxes',
-            'sales_items.sale_id = sales_items_taxes.sale_id AND sales_items.item_id = sales_items_taxes.item_id AND sales_items.line = sales_items_taxes.line',
-            'left outer'
+            $this->db->prefixTable('sales_items_taxes_temp') . ' AS sales_items_taxes',
+            '`sales_items`.`sale_id` = `sales_items_taxes`.`sale_id`'
+                . ' AND `sales_items`.`item_id` = `sales_items_taxes`.`item_id`'
+                . ' AND `sales_items`.`line` = `sales_items_taxes`.`line`',
+            'left outer',
+            false
         );
-        $builder->join('sales_payments_temp AS payments', 'sales.sale_id = payments.sale_id', 'LEFT OUTER');
+        $builder->join($this->db->prefixTable('sales_payments_temp') . ' AS payments', '`sales`.`sale_id` = `payments`.`sale_id`', 'LEFT OUTER', false);
     }
 
     /**
@@ -116,6 +120,7 @@ abstract class Summary_report extends Report
         } else {
             $builder->where('sales.sale_time BETWEEN ' . $this->db->escape(rawurldecode($inputs['start_date'])) . ' AND ' . $this->db->escape(rawurldecode($inputs['end_date'])));
         }
+        $this->applyBusinessUnitScope($inputs, $builder, 'sales.business_unit_id');
 
         if ($inputs['location_id'] != 'all') {
             $builder->where('sales_items.item_location', $inputs['location_id']);

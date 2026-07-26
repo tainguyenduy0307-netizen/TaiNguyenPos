@@ -1106,7 +1106,10 @@ class Sale extends Model
             $where = 'sales.sale_id = ' . $this->db->escape($inputs['sale_id']);
         }
 
-        if (!empty($inputs['business_unit_id'])) {
+        $businessUnitIds = $this->getReportBusinessUnitIds($inputs);
+        if ($businessUnitIds !== []) {
+            $where = '(' . $where . ') AND sales.business_unit_id IN (' . implode(',', array_map([$this->db, 'escape'], $businessUnitIds)) . ')';
+        } elseif (!empty($inputs['business_unit_id'])) {
             $where = '(' . $where . ') AND sales.business_unit_id = ' . $this->db->escape((int) $inputs['business_unit_id']);
         }
 
@@ -1172,12 +1175,13 @@ class Sale extends Model
         $this->db->query($sql);
         $item = model(Item::class);
         $sql = 'CREATE TEMPORARY TABLE IF NOT EXISTS ' . $this->db->prefixTable('sales_items_temp') .
-            ' (INDEX(sale_date), INDEX(sale_time), INDEX(sale_id))
+            ' (INDEX(sale_date), INDEX(sale_time), INDEX(sale_id), INDEX(business_unit_id))
             (
                 SELECT
                     MAX(DATE(sales.sale_time)) AS sale_date,
                     MAX(sales.sale_time) AS sale_time,
                     sales.sale_id AS sale_id,
+                    MAX(sales.business_unit_id) AS business_unit_id,
                     MAX(sales.sale_status) AS sale_status,
                     MAX(sales.sale_type) AS sale_type,
                     MAX(sales.comment) AS comment,
@@ -1477,6 +1481,18 @@ class Sale extends Model
     private function getCurrentBusinessUnitId(): int
     {
         return Services::businessUnit()->requireCurrentBusinessUnitId();
+    }
+
+    private function getReportBusinessUnitIds(array $inputs): array
+    {
+        if (!isset($inputs['business_unit_ids']) || !is_array($inputs['business_unit_ids'])) {
+            return [];
+        }
+
+        $businessUnitIds = array_map('intval', $inputs['business_unit_ids']);
+        $businessUnitIds = array_filter($businessUnitIds, static fn (int $businessUnitId): bool => $businessUnitId > 0);
+
+        return array_values(array_unique($businessUnitIds));
     }
 
     private function saleBelongsToBusinessUnit(int $saleId, int $businessUnitId): bool

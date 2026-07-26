@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Models\Attribute;
 use App\Models\Customer;
+use App\Models\Employee;
 use App\Models\Stock_location;
 use App\Models\Supplier;
 use App\Models\Reports\Detailed_receivings;
@@ -28,6 +29,7 @@ use App\Models\Reports\Summary_taxes;
 use CodeIgniter\HTTP\ResponseInterface;
 use Config\OSPOS;
 use Config\Services;
+use RuntimeException;
 
 class Reports extends Secure_Controller
 {
@@ -120,6 +122,81 @@ class Reports extends Secure_Controller
         return view('reports/listing', $data);
     }
 
+    private function withReportBusinessUnitScope(array $inputs): array
+    {
+        $inputs['business_unit_ids'] = $this->getReportBusinessUnitIds();
+        $inputs['is_aggregate_report'] = $this->isAggregateReportScope();
+
+        return $inputs;
+    }
+
+    private function getReportBusinessUnitIds(): array
+    {
+        $accountScope = $this->getAccountScope();
+
+        if (in_array($accountScope, [Employee::ACCOUNT_SCOPE_DAY, Employee::ACCOUNT_SCOPE_NIGHT], true)) {
+            $businessUnit = Services::businessUnit()->getCurrentBusinessUnit();
+
+            if ($businessUnit !== null && $businessUnit->code === $accountScope) {
+                return [(int) $businessUnit->id];
+            }
+        }
+
+        if ($accountScope === Employee::ACCOUNT_SCOPE_AGGREGATE) {
+            return $this->getAggregateReportBusinessUnitIds();
+        }
+
+        throw new RuntimeException('A valid report business unit scope is required.');
+    }
+
+    private function getAggregateReportBusinessUnitIds(): array
+    {
+        $businessUnits = db_connect()
+            ->table('business_units')
+            ->select('id, code')
+            ->whereIn('code', [Employee::ACCOUNT_SCOPE_DAY, Employee::ACCOUNT_SCOPE_NIGHT])
+            ->where('enabled', 1)
+            ->get()
+            ->getResultArray();
+
+        $businessUnitIdsByCode = array_column($businessUnits, 'id', 'code');
+
+        if (
+            !isset($businessUnitIdsByCode[Employee::ACCOUNT_SCOPE_DAY])
+            || !isset($businessUnitIdsByCode[Employee::ACCOUNT_SCOPE_NIGHT])
+        ) {
+            throw new RuntimeException('A valid report business unit scope is required.');
+        }
+
+        return [
+            (int) $businessUnitIdsByCode[Employee::ACCOUNT_SCOPE_DAY],
+            (int) $businessUnitIdsByCode[Employee::ACCOUNT_SCOPE_NIGHT],
+        ];
+    }
+
+    private function isAggregateReportScope(): bool
+    {
+        return $this->getAccountScope() === Employee::ACCOUNT_SCOPE_AGGREGATE;
+    }
+
+    private function getDetailedSaleEditAnchor(int $saleId, string $buttonKey, string $buttonLabel): string
+    {
+        if ($this->isAggregateReportScope()) {
+            return '';
+        }
+
+        return anchor(
+            'sales/edit/' . $saleId,
+            '<span class="glyphicon glyphicon-edit"></span>',
+            [
+                'class'           => 'modal-dlg print_hide',
+                $buttonKey        => $buttonLabel,
+                'data-btn-submit' => lang('Common.submit'),
+                'title'           => lang('Sales.update')
+            ]
+        );
+    }
+
     /**
      * Summary Sales Report.
      * @param string $start_date
@@ -138,6 +215,7 @@ class Reports extends Secure_Controller
             'sale_type'   => $sale_type,
             'location_id' => $location_id
         ];
+        $inputs = $this->withReportBusinessUnitScope($inputs);
 
         $report_data = $this->summary_sales->getData($inputs);
         $summary = $this->summary_sales->getSummaryData($inputs);
@@ -224,7 +302,7 @@ class Reports extends Secure_Controller
     {
         $this->clearCache();
 
-        $inputs = ['start_date' => $start_date, 'end_date' => $end_date, 'sale_type' => $sale_type];    // TODO: Duplicated Code
+        $inputs = $this->withReportBusinessUnitScope(['start_date' => $start_date, 'end_date' => $end_date, 'sale_type' => $sale_type]);    // TODO: Duplicated Code
 
         $report_data = $this->summary_expenses_categories->getData($inputs);
         $summary = $this->summary_expenses_categories->getSummaryData($inputs);
@@ -601,6 +679,7 @@ class Reports extends Secure_Controller
             'sale_type'   => 'complete',
             'location_id' => 'all'
         ];
+        $inputs = $this->withReportBusinessUnitScope($inputs);
 
         $report_data = $this->summary_payments->getData($inputs);
         $summary = $this->summary_payments->getSummaryData($inputs);
@@ -732,6 +811,7 @@ class Reports extends Secure_Controller
             'end_date'   => $end_date,
             'sale_type'  => $sale_type
         ];
+        $inputs = $this->withReportBusinessUnitScope($inputs);
 
         $report_data = $this->summary_expenses_categories->getData($inputs);
         $summary = $this->summary_expenses_categories->getSummaryData($inputs);
@@ -778,6 +858,7 @@ class Reports extends Secure_Controller
             'sale_type'   => $sale_type,
             'location_id' => $location_id
         ];
+        $inputs = $this->withReportBusinessUnitScope($inputs);
 
         $report_data = $this->summary_sales->getData($inputs);
         $summary = $this->summary_sales->getSummaryData($inputs);
@@ -1186,6 +1267,7 @@ class Reports extends Secure_Controller
             'sale_type'   => $sale_type,
             'location_id' => $location_id
         ];
+        $inputs = $this->withReportBusinessUnitScope($inputs);
 
         $report_data = $this->summary_payments->getData($inputs);
         $summary = $this->summary_payments->getSummaryData($inputs);
@@ -1628,11 +1710,15 @@ class Reports extends Secure_Controller
     {
         $this->clearCache();
 
-        $inputs = ['sale_id' => $sale_id];
+        $inputs = $this->withReportBusinessUnitScope(['sale_id' => $sale_id]);
 
         $this->detailed_sales->create($inputs);
 
-        $report_data = $this->detailed_sales->getDataBySaleId($sale_id);
+        $report_data = $this->detailed_sales->getDataBySaleId((int) $sale_id, $inputs);
+
+        if ($report_data === null) {
+            return $this->response->setStatusCode(403)->setJSON([]);
+        }
 
         if ($report_data['sale_status'] == CANCELED) {
             $button_key = 'data-btn-restore';
@@ -1655,16 +1741,7 @@ class Reports extends Secure_Controller
             'profit'        => to_currency($report_data['profit']),
             'payment_type'  => $report_data['payment_type'],
             'comment'       => $report_data['comment'],
-            'edit'          => anchor(
-                'sales/edit/' . $report_data['sale_id'],
-                '<span class="glyphicon glyphicon-edit"></span>',
-                [
-                    'class'           => 'modal-dlg print_hide',
-                    $button_key       => $button_label,
-                    'data-btn-submit' => lang('Common.submit'),
-                    'title'           => lang('Sales.update')
-                ]
-            )
+            'edit'          => $this->getDetailedSaleEditAnchor((int) $report_data['sale_id'], $button_key, $button_label)
         ];
 
         return $this->response->setJSON([$sale_id => $summary_data]);
@@ -1787,6 +1864,7 @@ class Reports extends Secure_Controller
             'location_id'    => $location_id,
             'definition_ids' => array_keys($definition_names)
         ];
+        $inputs = $this->withReportBusinessUnitScope($inputs);
 
         $this->detailed_sales->create($inputs);
 
@@ -1831,16 +1909,7 @@ class Reports extends Secure_Controller
                 'profit'        => to_currency($row['profit']),
                 'payment_type'  => $row['payment_type'],
                 'comment'       => $row['comment'],
-                'edit'          => anchor(
-                    'sales/edit/' . $row['sale_id'],
-                    '<span class="glyphicon glyphicon-edit"></span>',
-                    [
-                        'class'           => 'modal-dlg print_hide',
-                        $button_key       => $button_label,
-                        'data-btn-submit' => lang('Common.submit'),
-                        'title'           => lang('Sales.update')
-                    ]
-                )
+                'edit'          => $this->getDetailedSaleEditAnchor((int) $row['sale_id'], $button_key, $button_label)
             ];
 
             foreach ($report_data['details'][$key] as $drow) {
@@ -1877,12 +1946,14 @@ class Reports extends Secure_Controller
             'title'                => lang('Reports.detailed_sales_report'),
             'subtitle'             => $this->_get_subtitle_report(['start_date' => $start_date, 'end_date' => $end_date]),
             'headers'              => $headers,
-            'editable'             => 'sales',
             'summary_data'         => $summary_data,
             'details_data'         => $details_data,
             'details_data_rewards' => $details_data_rewards,
             'overall_summary_data' => $this->detailed_sales->getSummaryData($inputs)
         ];
+        if (!$this->isAggregateReportScope()) {
+            $data['editable'] = 'sales';
+        }
         return view('reports/tabular_details', $data);
     }
 

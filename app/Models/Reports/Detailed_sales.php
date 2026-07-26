@@ -68,7 +68,7 @@ class Detailed_sales extends Report
      * @param int $sale_id
      * @return array
      */
-    public function getDataBySaleId(int $sale_id): array
+    public function getDataBySaleId(int $sale_id, array $inputs = []): ?array
     {
         $builder = $this->db->table('sales_items_temp');
         $builder->select('sale_id,
@@ -85,6 +85,8 @@ class Detailed_sales extends Report
             MAX(sale_status) AS sale_status,
             comment');
         $builder->where('sale_id', $sale_id);
+        $this->applyBusinessUnitScope($inputs, $builder, 'business_unit_id');
+        $builder->groupBy('sale_id');
 
         return $builder->get()->getRowArray();
     }

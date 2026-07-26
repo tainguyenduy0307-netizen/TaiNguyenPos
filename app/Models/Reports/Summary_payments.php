@@ -49,6 +49,7 @@ class Summary_payments extends Summary_report
         } else {
             $where .= 'sale_time BETWEEN ' . $this->db->escape(rawurldecode($inputs['start_date'])) . ' AND ' . $this->db->escape(rawurldecode($inputs['end_date']));
         }
+        $where = '(' . $where . ') AND ' . $this->getBusinessUnitScopeWhere($inputs, 'sales.business_unit_id');
 
         $this->create_summary_payments_temp_tables($where);
 
