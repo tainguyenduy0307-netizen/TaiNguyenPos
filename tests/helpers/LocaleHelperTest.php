@@ -12,8 +12,23 @@ class LocaleHelperTest extends CIUnitTestCase
         require_once __DIR__ . '/../../app/Helpers/locale_helper.php';
 
         $config           = new OSPOS();
-        $config->settings = ['dateformat' => 'Y-m-d'];
+        $config->settings = [
+            'dateformat'           => 'Y-m-d',
+            'number_locale'        => 'en_US',
+            'currency_symbol'      => '$',
+            'currency_decimals'    => 2,
+            'tax_decimals'         => 2,
+            'quantity_decimals'    => 2,
+            'thousands_separator'  => 1,
+            'tax_included'         => false,
+        ];
         Factories::injectMock('config', OSPOS::class, $config);
+    }
+
+    protected function tearDown(): void
+    {
+        Factories::reset();
+        parent::tearDown();
     }
 
     public function testValidDateReturnsTrue(): void
@@ -55,5 +70,32 @@ class LocaleHelperTest extends CIUnitTestCase
     public function testPartialDateReturnsFalse(): void
     {
         $this->assertFalse(isValidDate('2024-06'));
+    }
+
+    public function testCurrencyDisplaysInVietnameseFormatWithoutSymbol(): void
+    {
+        $this->assertSame('0', to_currency('0'));
+        $this->assertSame('1.000', to_currency('1000'));
+        $this->assertSame('1.000.000', to_currency('1000000'));
+        $this->assertSame('-50.000', to_currency('-50000'));
+        $this->assertSame('1.235', to_currency('1234.56'));
+
+        $formatted = to_currency('1000');
+        $this->assertStringNotContainsString('$', $formatted);
+        $this->assertStringNotContainsString('₫', $formatted);
+    }
+
+    public function testCurrencyNoMoneyUsesSameVietnameseFormat(): void
+    {
+        $this->assertSame('1.000', to_currency_no_money('1000'));
+        $this->assertStringNotContainsString('$', to_currency_no_money('1000'));
+        $this->assertStringNotContainsString('₫', to_currency_no_money('1000'));
+    }
+
+    public function testParseDecimalsAcceptsVietnameseCurrencyInput(): void
+    {
+        $this->assertSame(10000.0, parse_decimals('10.000'));
+        $this->assertSame(1234.56, parse_decimals('1.234,56'));
+        $this->assertSame(1234.56, parse_decimals('1234.56'));
     }
 }

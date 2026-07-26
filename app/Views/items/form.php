@@ -179,7 +179,7 @@
             <div class="col-xs-4">
                 <div class="input-group input-group-sm">
                     <?php if (!is_right_side_currency_symbol()): ?>
-                        <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                        <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                     <?php endif; ?>
                     <?= form_input([
                         'name'    => 'cost_price',
@@ -189,7 +189,7 @@
                         'value'   => to_currency_no_money($item_info->cost_price)
                     ]) ?>
                     <?php if (is_right_side_currency_symbol()): ?>
-                        <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                        <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                     <?php endif; ?>
                 </div>
             </div>
@@ -200,7 +200,7 @@
             <div class="col-xs-4">
                 <div class="input-group input-group-sm">
                     <?php if (!is_right_side_currency_symbol()): ?>
-                        <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                        <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                     <?php endif; ?>
                     <?= form_input([
                         'name'    => 'unit_price',
@@ -210,7 +210,7 @@
                         'value'   => to_currency_no_money($item_info->unit_price)
                     ]) ?>
                     <?php if (is_right_side_currency_symbol()): ?>
-                        <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                        <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                     <?php endif; ?>
                 </div>
             </div>

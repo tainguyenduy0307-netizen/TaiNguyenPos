@@ -297,11 +297,23 @@ function get_reference_code_payment_types(): array
  */
 function is_right_side_currency_symbol(): bool
 {
-    $config = config(OSPOS::class)->settings;
-    $fmt = new NumberFormatter($config['number_locale'], NumberFormatter::CURRENCY);
-    $fmt->setSymbol(NumberFormatter::CURRENCY_SYMBOL, $config['currency_symbol']);
+    return false;
+}
 
-    return !preg_match('/^¤/', $fmt->getPattern());
+/**
+ * Returns the currency symbol used for display.
+ */
+function currency_symbol(): string
+{
+    return '';
+}
+
+/**
+ * Returns the number of decimals used for VND currency display.
+ */
+function currency_display_decimals(): int
+{
+    return 0;
 }
 
 /**
@@ -320,8 +332,7 @@ function quantity_decimals(): int
  */
 function totals_decimals(): int
 {
-    $config = config(OSPOS::class)->settings;
-    return $config['currency_decimals'] ?? 0;
+    return currency_display_decimals();
 }
 
 /**
@@ -368,7 +379,7 @@ function to_datetime(int $datetime = DEFAULT_DATETIME): string
  */
 function to_currency(?string $number): string
 {
-    return to_decimals($number, 'currency_decimals', NumberFormatter::CURRENCY);
+    return to_vnd_currency($number);
 }
 
 /**
@@ -377,7 +388,7 @@ function to_currency(?string $number): string
  */
 function to_currency_no_money(?string $number): string
 {
-    return to_decimals($number, 'currency_decimals');
+    return to_vnd_currency($number);
 }
 
 /**
@@ -386,13 +397,19 @@ function to_currency_no_money(?string $number): string
  */
 function to_currency_tax(?string $number): string
 {
-    $config = config(OSPOS::class)->settings;
+    return to_vnd_currency($number);
+}
 
-    if ($config['tax_included']) {    // TODO: ternary notation
-        return to_decimals($number, 'tax_decimals', NumberFormatter::CURRENCY);
-    } else {
-        return to_decimals($number, 'currency_decimals', NumberFormatter::CURRENCY);
+/**
+ * Formats a currency amount for VND display without a currency symbol.
+ */
+function to_vnd_currency(?string $number): string
+{
+    if (!isset($number)) {
+        return '';
     }
+
+    return number_format((float) $number, currency_display_decimals(), ',', '.');
 }
 
 /**
@@ -438,14 +455,17 @@ function to_decimals(?string $number, ?string $decimals = null, int $type = Numb
     }
 
     $config = config(OSPOS::class)->settings;
-    $fmt = new NumberFormatter($config['number_locale'], $type);
-    $fmt->setAttribute(NumberFormatter::MIN_FRACTION_DIGITS, empty($decimals) ? DEFAULT_PRECISION : $config[$decimals]);
-    $fmt->setAttribute(NumberFormatter::MAX_FRACTION_DIGITS, empty($decimals) ? DEFAULT_PRECISION : $config[$decimals]);
+    $fmt = new NumberFormatter($config['number_locale'] ?? 'vi_VN', $type);
+    $precision = empty($decimals) ? DEFAULT_PRECISION : ($config[$decimals] ?? DEFAULT_PRECISION);
+    $fmt->setAttribute(NumberFormatter::MIN_FRACTION_DIGITS, $precision);
+    $fmt->setAttribute(NumberFormatter::MAX_FRACTION_DIGITS, $precision);
 
     if (empty($config['thousands_separator'])) {
         $fmt->setTextAttribute(NumberFormatter::GROUPING_SEPARATOR_SYMBOL, '');
     }
-    $fmt->setSymbol(NumberFormatter::CURRENCY_SYMBOL, $config['currency_symbol']);
+    $fmt->setSymbol(NumberFormatter::GROUPING_SEPARATOR_SYMBOL, '.');
+    $fmt->setSymbol(NumberFormatter::DECIMAL_SEPARATOR_SYMBOL, ',');
+    $fmt->setSymbol(NumberFormatter::CURRENCY_SYMBOL, currency_symbol());
 
     return $fmt->format((float) $number);
 }
@@ -480,21 +500,8 @@ function parse_decimals(string $number, ?int $decimals = null): mixed
     }
 
 
-    $config = config(OSPOS::class)->settings;
-
-    $fmt = new NumberFormatter($config['number_locale'], NumberFormatter::DECIMAL);
-
-    if (!$decimals) {
-        $decimals = intVal($config['currency_decimals']);
-        $fmt->setAttribute(NumberFormatter::FRACTION_DIGITS, $decimals);
-    }
-
-    if (empty($config['thousands_separator'])) {
-        $fmt->setTextAttribute(NumberFormatter::GROUPING_SEPARATOR_SYMBOL, '');
-    }
-
     try {
-        $locale_safe_number = $fmt->parse($number);
+        $locale_safe_number = parse_vnd_number($number);
 
         if (
             $locale_safe_number === false
@@ -508,6 +515,34 @@ function parse_decimals(string $number, ?int $decimals = null): mixed
     } catch (Exception $e) {
         return false;
     }
+}
+
+/**
+ * Parses either VND-formatted input (1.000 or 1.234,56) or plain backend numeric strings.
+ */
+function parse_vnd_number(string $number): mixed
+{
+    $currency_symbol = currency_symbol();
+    $number = $currency_symbol === '' ? trim($number) : trim(str_replace($currency_symbol, '', $number));
+    $number = preg_replace('/\s+/', '', $number);
+
+    if ($number === '') {
+        return '';
+    }
+
+    if (preg_match('/^-?\d{1,3}(\.\d{3})+(,\d+)?$/', $number) === 1) {
+        return (float) str_replace(',', '.', str_replace('.', '', $number));
+    }
+
+    if (preg_match('/^-?\d+(,\d+)?$/', $number) === 1) {
+        return (float) str_replace(',', '.', $number);
+    }
+
+    if (preg_match('/^-?\d+(\.\d+)?$/', $number) === 1) {
+        return (float) $number;
+    }
+
+    return false;
 }
 
 /**

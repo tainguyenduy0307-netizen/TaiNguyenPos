@@ -74,7 +74,7 @@
                                 'data-toggle'  => 'toggle',
                                 'data-size'    => 'normal',
                                 'data-onstyle' => 'success',
-                                'data-on'      => '<b>' . $config['currency_symbol'] . '</b>',
+                                'data-on'      => '<b>' . currency_symbol() . '</b>',
                                 'data-off'     => '<b>%</b>',
                                 'checked'      => $config['default_sales_discount_type'] == 1
                             ]) ?>
@@ -104,7 +104,7 @@
                                 'data-toggle'  => 'toggle',
                                 'data-size'    => 'normal',
                                 'data-onstyle' => 'success',
-                                'data-on'      => '<b>' . $config['currency_symbol'] . '</b>',
+                                'data-on'      => '<b>' . currency_symbol() . '</b>',
                                 'data-off'     => '<b>%</b>',
                                 'checked'      => $config['default_receivings_discount_type'] == 1
                             ]) ?>

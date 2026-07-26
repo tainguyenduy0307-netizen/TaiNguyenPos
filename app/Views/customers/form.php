@@ -213,7 +213,7 @@
                         <div class="col-xs-4">
                             <div class="input-group input-group-sm">
                                 <?php if (!is_right_side_currency_symbol()): ?>
-                                    <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                                    <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                                 <?php endif; ?>
                                 <?= form_input([
                                     'name'     => 'total',
@@ -223,7 +223,7 @@
                                     'disabled' => ''
                                 ]) ?>
                                 <?php if (is_right_side_currency_symbol()): ?>
-                                    <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                                    <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -234,7 +234,7 @@
                         <div class="col-xs-4">
                             <div class="input-group input-group-sm">
                                 <?php if (!is_right_side_currency_symbol()): ?>
-                                    <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                                    <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                                 <?php endif; ?>
                                 <?= form_input([
                                     'name'     => 'max',
@@ -244,7 +244,7 @@
                                     'disabled' => ''
                                 ]) ?>
                                 <?php if (is_right_side_currency_symbol()): ?>
-                                    <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                                    <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -255,7 +255,7 @@
                         <div class="col-xs-4">
                             <div class="input-group input-group-sm">
                                 <?php if (!is_right_side_currency_symbol()): ?>
-                                    <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                                    <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                                 <?php endif; ?>
                                 <?= form_input([
                                     'name'     => 'min',
@@ -265,7 +265,7 @@
                                     'disabled' => ''
                                 ]) ?>
                                 <?php if (is_right_side_currency_symbol()): ?>
-                                    <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                                    <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -276,7 +276,7 @@
                         <div class="col-xs-4">
                             <div class="input-group input-group-sm">
                                 <?php if (!is_right_side_currency_symbol()): ?>
-                                    <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                                    <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                                 <?php endif; ?>
                                 <?= form_input([
                                     'name'     => 'average',
@@ -286,7 +286,7 @@
                                     'disabled' => ''
                                 ]) ?>
                                 <?php if (is_right_side_currency_symbol()): ?>
-                                    <span class="input-group-addon input-sm"><b><?= esc($config['currency_symbol']) ?></b></span>
+                                    <span class="input-group-addon input-sm"><b><?= esc(currency_symbol()) ?></b></span>
                                 <?php endif; ?>
                             </div>
                         </div>

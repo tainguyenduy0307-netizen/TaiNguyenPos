@@ -10,6 +10,17 @@
 ?>
 
 <script type="text/javascript">
+    function formatCurrencyValue(value) {
+        <?php if (!$show_currency) { ?>
+            return value;
+        <?php } ?>
+
+        var numericValue = Number(value);
+        return isNaN(numericValue)
+            ? value
+            : numericValue.toLocaleString('vi-VN', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+    }
+
     // Labels and data series
     var data = {
         labels: <?= esc(json_encode($labels_1), 'js') ?>,
@@ -47,22 +58,8 @@
             offset: 60,
             // The label interpolation function enables you to modify the values
             // used for the labels on each axis.
-            <?php
-                $currency_symbol = esc($config['currency_symbol'], 'js');
-                $currency_prefix = '';
-                $currency_suffix = '';
-
-                if ($show_currency) {
-                    if (is_right_side_currency_symbol()) {
-                        $currency_suffix = $currency_symbol;
-                    } else {
-                        $currency_prefix = $currency_symbol;
-                    }
-                }
-            ?>
-
             labelInterpolationFnc: function(value) {
-                return '<?= $currency_prefix ?>' + value + '<?= $currency_suffix ?>';
+                return formatCurrencyValue(value);
             }
         },
 

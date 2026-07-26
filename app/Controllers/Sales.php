@@ -489,7 +489,7 @@ class Sales extends Secure_Controller
                         $newRewardValue = $points - $this->sale_lib->get_amount_due();
                         $newRewardValue = max($newRewardValue, 0);
                         $this->sale_lib->set_rewards_remainder($newRewardValue);
-                        $newRewardValue = str_replace('$', '\$', to_currency($newRewardValue));
+                        $newRewardValue = to_currency($newRewardValue);
                         $data['warning'] = lang('Sales.rewards_remaining_balance') . $newRewardValue;
                         $amountTendered = min($this->sale_lib->get_amount_due(), $points);
 
