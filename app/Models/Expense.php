@@ -5,6 +5,7 @@ namespace App\Models;
 use CodeIgniter\Database\ResultInterface;
 use CodeIgniter\Model;
 use Config\OSPOS;
+use Config\Services;
 use stdClass;
 
 /**
@@ -23,6 +24,7 @@ class Expense extends Model
         'expense_category_id',
         'description',
         'employee_id',
+        'business_unit_id',
         'deleted',
         'supplier_tax_code',
         'tax_amount',
@@ -34,8 +36,10 @@ class Expense extends Model
      */
     public function exists(int $expense_id): bool
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $builder = $this->db->table('expenses');
         $builder->where('expense_id', $expense_id);
+        $builder->where('business_unit_id', $businessUnitId);
 
         return ($builder->get()->getNumRows() == 1);    // TODO: ===
     }
@@ -45,8 +49,10 @@ class Expense extends Model
      */
     public function get_expense_category(int $expense_id): object    // TODO: This function is never called in the code
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $builder = $this->db->table('expenses');
         $builder->where('expense_id', $expense_id);
+        $builder->where('business_unit_id', $businessUnitId);
 
         $expense_category = model(Expense_category::class);
         return $expense_category->get_info($builder->get()->getRow()->expense_category_id);    // TODO: refactor out the nested function call.
@@ -57,8 +63,10 @@ class Expense extends Model
      */
     public function get_employee(int $expense_id): object    // TODO: This function is never called in the code
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $builder = $this->db->table('expenses');
         $builder->where('expense_id', $expense_id);
+        $builder->where('business_unit_id', $businessUnitId);
 
         $employee = model(Employee::class);
 
@@ -71,8 +79,10 @@ class Expense extends Model
      */
     public function get_multiple_info(array $expense_ids): ResultInterface
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $builder = $this->db->table('expenses');
         $builder->whereIn('expenses.expense_id', $expense_ids);
+        $builder->where('expenses.business_unit_id', $businessUnitId);
         $builder->orderBy('expense_id', 'asc');
 
         return $builder->get();
@@ -100,6 +110,8 @@ class Expense extends Model
      */
     public function search(string $search, array $filters, ?int $rows = 0, ?int $limit_from = 0, ?string $sort = 'expense_id', ?string $order = 'asc', ?bool $count_only = false): false|string|ResultInterface
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+
         // Set default values
         if ($rows == null) $rows = 0;
         if ($limit_from == null) $limit_from = 0;
@@ -123,6 +135,7 @@ class Expense extends Model
                 MAX(expenses.tax_amount) AS tax_amount,
                 MAX(expenses.payment_type) AS payment_type,
                 MAX(expenses.description) AS description,
+                MAX(expenses.business_unit_id) AS business_unit_id,
                 MAX(employees.first_name) AS first_name,
                 MAX(employees.last_name) AS last_name,
                 MAX(expense_categories.category_name) AS category_name
@@ -144,6 +157,7 @@ class Expense extends Model
         $builder->groupEnd();
 
         $builder->where('expenses.deleted', $filters['is_deleted']);
+        $builder->where('expenses.business_unit_id', $businessUnitId);
 
         if (empty($config['date_or_time_format'])) {
             $builder->where('DATE_FORMAT(expenses.date, "%Y-%m-%d") BETWEEN ' . $this->db->escape($filters['start_date']) . ' AND ' . $this->db->escape($filters['end_date']));
@@ -194,6 +208,7 @@ class Expense extends Model
      */
     public function get_info(int $expense_id): object
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $builder = $this->db->table('expenses AS expenses');
         $builder->select('
             expenses.expense_id AS expense_id,
@@ -206,6 +221,7 @@ class Expense extends Model
             expenses.payment_type AS payment_type,
             expenses.description AS description,
             expenses.employee_id AS employee_id,
+            expenses.business_unit_id AS business_unit_id,
             expenses.deleted AS deleted,
             employees.first_name AS first_name,
             employees.last_name AS last_name,
@@ -217,6 +233,7 @@ class Expense extends Model
         $builder->join('expense_categories AS expense_categories', 'expense_categories.expense_category_id = expenses.expense_category_id', 'LEFT');
         $builder->join('suppliers AS suppliers', 'suppliers.person_id = expenses.supplier_id', 'LEFT');
         $builder->where('expense_id', $expense_id);
+        $builder->where('expenses.business_unit_id', $businessUnitId);
 
         $query = $builder->get();
 
@@ -261,9 +278,14 @@ class Expense extends Model
      */
     public function save_value(array &$expense_data, int $expense_id = NEW_ENTRY): bool
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+        unset($expense_data['business_unit_id']);
+
         $builder = $this->db->table('expenses');
 
-        if ($expense_id == NEW_ENTRY || !$this->exists($expense_id)) {
+        if ($expense_id == NEW_ENTRY) {
+            $expense_data['business_unit_id'] = $businessUnitId;
+
             if ($builder->insert($expense_data)) {
                 $expense_data['expense_id'] = $this->db->insertID();
 
@@ -273,9 +295,46 @@ class Expense extends Model
             return false;
         }
 
+        if (!$this->expenseBelongsToBusinessUnit($expense_id, $businessUnitId)) {
+            return false;
+        }
+
         $builder->where('expense_id', $expense_id);
+        $builder->where('business_unit_id', $businessUnitId);
 
         return $builder->update($expense_data);
+    }
+
+    public function update($id = null, $data = null): bool
+    {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+        $expenseIds = is_array($id) ? array_map('intval', $id) : [(int) $id];
+
+        if ($expenseIds === [] || !is_array($data) || !$this->allExpensesBelongToBusinessUnit($expenseIds, $businessUnitId)) {
+            return false;
+        }
+
+        unset($data['business_unit_id']);
+
+        $builder = $this->db->table('expenses');
+        $builder->where('business_unit_id', $businessUnitId);
+
+        if (is_array($id)) {
+            $builder->whereIn('expense_id', $expenseIds);
+        } else {
+            $builder->where('expense_id', (int) $id);
+        }
+
+        return $builder->update($data);
+    }
+
+    public function delete($id = null, bool $purge = false): bool
+    {
+        if ($id === null) {
+            return false;
+        }
+
+        return $this->delete_list(is_array($id) ? $id : [$id]);
     }
 
     /**
@@ -283,10 +342,18 @@ class Expense extends Model
      */
     public function delete_list(array $expense_ids): bool
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+        $expense_ids = array_values(array_unique(array_map('intval', $expense_ids)));
+
+        if ($expense_ids === [] || !$this->allExpensesBelongToBusinessUnit($expense_ids, $businessUnitId)) {
+            return false;
+        }
+
         $builder = $this->db->table('expenses');
 
         $this->db->transStart();
         $builder->whereIn('expense_id', $expense_ids);
+        $builder->where('business_unit_id', $businessUnitId);
         $success = $builder->update(['deleted' => 1]);
         $this->db->transComplete();
 
@@ -300,12 +367,14 @@ class Expense extends Model
      */
     public function get_payments_summary(string $search, array $filters): array    // TODO: $search is passed but never used in the function
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $config = config(OSPOS::class)->settings;
 
         // get payment summary
         $builder = $this->db->table('expenses');
         $builder->select('payment_type, COUNT(amount) AS count, SUM(amount) AS amount');
         $builder->where('deleted', $filters['is_deleted']);
+        $builder->where('business_unit_id', $businessUnitId);
 
         if (empty($config['date_or_time_format'])) {
             $builder->where('DATE_FORMAT(date, "%Y-%m-%d") BETWEEN ' . $this->db->escape($filters['start_date']) . ' AND ' . $this->db->escape($filters['end_date']));
@@ -351,9 +420,39 @@ class Expense extends Model
      */
     public function get_expense_payment(int $expense_id): ResultInterface
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $builder = $this->db->table('expenses');
         $builder->where('expense_id', $expense_id);
+        $builder->where('business_unit_id', $businessUnitId);
 
         return $builder->get();
+    }
+
+    private function getCurrentBusinessUnitId(): int
+    {
+        return Services::businessUnit()->requireCurrentBusinessUnitId();
+    }
+
+    private function expenseBelongsToBusinessUnit(int $expenseId, int $businessUnitId): bool
+    {
+        return $this->db->table('expenses')
+            ->where('expense_id', $expenseId)
+            ->where('business_unit_id', $businessUnitId)
+            ->countAllResults() === 1;
+    }
+
+    /**
+     * @param array<int, int> $expenseIds
+     */
+    private function allExpensesBelongToBusinessUnit(array $expenseIds, int $businessUnitId): bool
+    {
+        if ($expenseIds === []) {
+            return false;
+        }
+
+        return $this->db->table('expenses')
+            ->whereIn('expense_id', $expenseIds)
+            ->where('business_unit_id', $businessUnitId)
+            ->countAllResults() === count($expenseIds);
     }
 }

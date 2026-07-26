@@ -26,6 +26,8 @@ class Expenses extends Secure_Controller
      */
     public function getIndex(): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $data['table_headers'] = get_expenses_manage_table_headers();
 
         // filters that will be loaded in the multiselect dropdown
@@ -49,6 +51,8 @@ class Expenses extends Secure_Controller
      */
     public function getSearch(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $search   = $this->request->getGet('search');
         $limit    = $this->request->getGet('limit', FILTER_SANITIZE_NUMBER_INT);
         $offset   = $this->request->getGet('offset', FILTER_SANITIZE_NUMBER_INT);
@@ -91,6 +95,8 @@ class Expenses extends Secure_Controller
      */
     public function getView(int $expense_id = NEW_ENTRY): string
     {
+        $this->requireCurrentBusinessUnitId();
+
         $data = [];    // TODO: Duplicated code
 
         $data['expenses_info'] = $this->expense->get_info($expense_id);
@@ -143,6 +149,8 @@ class Expenses extends Secure_Controller
      */
     public function getRow(int $row_id): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $expense_info = $this->expense->get_info($row_id);
         $data_row = get_expenses_data_row($expense_info);
 
@@ -155,6 +163,8 @@ class Expenses extends Secure_Controller
      */
     public function postSave(int $expense_id = NEW_ENTRY): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $config = config(OSPOS::class)->settings;
         $newdate = $this->request->getPost('date', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
 
@@ -204,6 +214,8 @@ class Expenses extends Secure_Controller
      */
     public function postDelete(): ResponseInterface
     {
+        $this->requireCurrentBusinessUnitId();
+
         $expenses_to_delete = $this->request->getPost('ids', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
 
         if ($this->expense->delete_list($expenses_to_delete)) {
@@ -211,5 +223,10 @@ class Expenses extends Secure_Controller
         } else {
             return $this->response->setJSON(['success' => false, 'message' => lang('Expenses.cannot_be_deleted'), 'ids' => $expenses_to_delete]);
         }
+    }
+
+    private function requireCurrentBusinessUnitId(): int
+    {
+        return Services::businessUnit()->requireCurrentBusinessUnitId();
     }
 }
