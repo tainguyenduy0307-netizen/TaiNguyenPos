@@ -9,6 +9,7 @@ use App\Database\Migrations\AddCustomerLoyaltyAdjustments;
 use App\Database\Migrations\AddCustomerLoyaltyLedger;
 use App\Database\Migrations\AddFixedEmployeeAccountScopes;
 use App\Database\Migrations\AddSalesBusinessUnitScope;
+use App\Database\Migrations\AddBusinessUnitInvoiceSequences;
 use App\Models\Customer;
 use App\Models\Customer_loyalty_ledger;
 use App\Models\Sale;
@@ -24,6 +25,7 @@ require_once APPPATH . 'Database/Migrations/20260725000000_AddBusinessUnits.php'
 require_once APPPATH . 'Database/Migrations/20260725000001_AddSalesBusinessUnitScope.php';
 require_once APPPATH . 'Database/Migrations/20260726000002_AddCustomerLoyaltyLedger.php';
 require_once APPPATH . 'Database/Migrations/20260726000003_AddCustomerLoyaltyAdjustments.php';
+require_once APPPATH . 'Database/Migrations/20260726000004_AddBusinessUnitInvoiceSequences.php';
 
 class CustomerLoyaltyLedgerTest extends CIUnitTestCase
 {
@@ -53,6 +55,7 @@ class CustomerLoyaltyLedgerTest extends CIUnitTestCase
         (new AddFixedEmployeeAccountScopes())->up();
         (new AddBusinessUnits())->up();
         (new AddSalesBusinessUnitScope())->up();
+        (new AddBusinessUnitInvoiceSequences())->up();
         (new AddCustomerLoyaltyLedger())->up();
         (new AddCustomerLoyaltyAdjustments())->up();
 

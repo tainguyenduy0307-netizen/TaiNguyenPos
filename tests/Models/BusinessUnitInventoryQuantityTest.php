@@ -3,6 +3,7 @@
 namespace Tests\Models;
 
 use App\Database\Migrations\AddBusinessUnitInventoryQuantities;
+use App\Database\Migrations\AddBusinessUnitInvoiceSequences;
 use App\Database\Migrations\AddBusinessUnits;
 use App\Database\Migrations\AddFixedEmployeeAccountScopes;
 use App\Database\Migrations\AddReceivingsBusinessUnitScope;
@@ -22,6 +23,7 @@ require_once APPPATH . 'Database/Migrations/20260725000000_AddBusinessUnits.php'
 require_once APPPATH . 'Database/Migrations/20260725000001_AddSalesBusinessUnitScope.php';
 require_once APPPATH . 'Database/Migrations/20260725000002_AddReceivingsBusinessUnitScope.php';
 require_once APPPATH . 'Database/Migrations/20260725000003_AddBusinessUnitInventoryQuantities.php';
+require_once APPPATH . 'Database/Migrations/20260726000004_AddBusinessUnitInvoiceSequences.php';
 
 class BusinessUnitInventoryQuantityTest extends CIUnitTestCase
 {
@@ -50,6 +52,7 @@ class BusinessUnitInventoryQuantityTest extends CIUnitTestCase
         (new AddBusinessUnits())->up();
         (new AddSalesBusinessUnitScope())->up();
         (new AddReceivingsBusinessUnitScope())->up();
+        (new AddBusinessUnitInvoiceSequences())->up();
     }
 
     protected function tearDown(): void

@@ -584,12 +584,20 @@ class Sale extends Model
 
         $this->rejectRewardPayments($payments ?? []);
         $previousCustomerId = $saleId == NEW_ENTRY ? null : $this->getSaleCustomerId($saleId);
+        $existingInvoiceNumber = null;
 
         if ($saleId != NEW_ENTRY) {
             if (!$this->saleBelongsToBusinessUnit($saleId, $businessUnitId)) {
                 return -1;
             }
 
+            $existingInvoiceNumber = $this->getInvoiceNumber($saleId);
+        }
+
+        // Run these queries as a transaction, we want to make sure we do all or nothing
+        $this->db->transStart();
+
+        if ($saleId != NEW_ENTRY) {
             $this->clear_suspended_sale_detail($saleId);
         }
 
@@ -606,8 +614,11 @@ class Sale extends Model
             'sale_type'         => $sale_type
         ];
 
-        // Run these queries as a transaction, we want to make sure we do all or nothing
-        $this->db->transStart();
+        $sales_data['invoice_number'] = $this->resolveScopedInvoiceNumber(
+            (int) $saleStatus,
+            $sale_type,
+            $existingInvoiceNumber
+        );
 
         $builder = $this->db->table('sales');
         if ($saleId == NEW_ENTRY) {
@@ -1055,8 +1066,10 @@ class Sale extends Model
      */
     public function check_invoice_number_exists(string $invoice_number, string $sale_id = ''): bool
     {
+        $businessUnitId = $this->getCurrentBusinessUnitId();
         $builder = $this->db->table('sales');
         $builder->where('invoice_number', $invoice_number);
+        $builder->where('business_unit_id', $businessUnitId);
 
         if (!empty($sale_id)) {
             $builder->where('sale_id !=', $sale_id);
@@ -1515,6 +1528,35 @@ class Sale extends Model
             ->where('sale_id', $saleId)
             ->where('business_unit_id', $businessUnitId)
             ->countAllResults() === 1;
+    }
+
+    private function resolveScopedInvoiceNumber(
+        int $saleStatus,
+        int $saleType,
+        ?string $existingInvoiceNumber
+    ): ?string
+    {
+        if (!empty($existingInvoiceNumber)) {
+            return $existingInvoiceNumber;
+        }
+
+        if ($saleStatus !== COMPLETED || $saleType === SALE_TYPE_RETURN) {
+            return null;
+        }
+
+        return Services::businessUnitInvoiceSequence()->acquireNextForCurrentBusinessUnitInTransaction();
+    }
+
+    private function getInvoiceNumber(int $saleId): ?string
+    {
+        $row = $this->db->table('sales')
+            ->select('invoice_number')
+            ->where('sale_id', $saleId)
+            ->where('business_unit_id', $this->getCurrentBusinessUnitId())
+            ->get()
+            ->getRow();
+
+        return $row === null ? null : $row->invoice_number;
     }
 
     private function syncCustomerLoyalty(int $saleId, ?int $previousCustomerId = null): void

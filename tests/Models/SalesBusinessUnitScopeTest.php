@@ -7,6 +7,7 @@ use App\Database\Migrations\AddBusinessUnitInventoryQuantities;
 use App\Database\Migrations\AddFixedEmployeeAccountScopes;
 use App\Database\Migrations\AddReceivingsBusinessUnitScope;
 use App\Database\Migrations\AddSalesBusinessUnitScope;
+use App\Database\Migrations\AddBusinessUnitInvoiceSequences;
 use App\Libraries\Sale_lib;
 use App\Models\Sale;
 use CodeIgniter\Test\CIUnitTestCase;
@@ -18,6 +19,7 @@ require_once APPPATH . 'Database/Migrations/20260725000000_AddBusinessUnits.php'
 require_once APPPATH . 'Database/Migrations/20260725000001_AddSalesBusinessUnitScope.php';
 require_once APPPATH . 'Database/Migrations/20260725000002_AddReceivingsBusinessUnitScope.php';
 require_once APPPATH . 'Database/Migrations/20260725000003_AddBusinessUnitInventoryQuantities.php';
+require_once APPPATH . 'Database/Migrations/20260726000004_AddBusinessUnitInvoiceSequences.php';
 
 class SalesBusinessUnitScopeTest extends CIUnitTestCase
 {
@@ -48,6 +50,7 @@ class SalesBusinessUnitScopeTest extends CIUnitTestCase
         (new AddSalesBusinessUnitScope())->up();
         (new AddReceivingsBusinessUnitScope())->up();
         (new AddBusinessUnitInventoryQuantities())->up();
+        (new AddBusinessUnitInvoiceSequences())->up();
 
         $this->dropSaleTempTables();
         $this->itemId = $this->createTestItem();

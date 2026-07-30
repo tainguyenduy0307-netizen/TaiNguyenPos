@@ -346,7 +346,7 @@ class Sales extends Secure_Controller
     public function postSetInvoiceNumber(): ResponseInterface|string
     {
         $this->requireCurrentBusinessUnitId();
-        $this->sale_lib->set_invoice_number($this->request->getPost('sales_invoice_number', FILTER_SANITIZE_NUMBER_INT));
+        $this->sale_lib->clear_invoice_number();
         return $this->response->setJSON(['success' => true]);
     }
 
@@ -743,7 +743,7 @@ class Sales extends Secure_Controller
         $data['price_work_orders'] = $this->sale_lib->is_price_work_orders();
         $data['email_receipt'] = $this->sale_lib->is_email_receipt();
         $customer_id = $this->sale_lib->get_customer();
-        $invoice_number = $this->sale_lib->get_invoice_number();
+        $invoice_number = null;
         $data["invoice_number"] = $invoice_number;
         $work_order_number = $this->sale_lib->get_work_order_number();
         $data["work_order_number"] = $work_order_number;
@@ -809,45 +809,32 @@ class Sales extends Secure_Controller
         $data['print_price_info'] = true;
 
         if ($this->sale_lib->is_invoice_mode()) {
-            $invoice_format = $this->config['sales_invoice_format'];
+            $data['invoice_number'] = $invoice_number;
+            $data['sale_status'] = COMPLETED;
+            $sale_type = SALE_TYPE_INVOICE;
 
-            // Generate final invoice number (if using the invoice in sales by receipt mode then the invoice number can be manually entered or altered in some way
-            if (!empty($invoice_format) && $invoice_number == null) {
-                // The user can retain the default encoded format or can manually override it.  It still passes through the rendering step.
-                $invoice_number = $this->token_lib->render($invoice_format);
+            $invoice_type = $this->config['invoice_type'];
+            if (!Sale_lib::isValidInvoiceType($invoice_type)) {
+                $invoice_type = 'invoice';
             }
+            $invoice_view = $invoice_type;
 
+            // Save the data to the sales table
+            $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details);
+            $data['sale_id'] = 'POS ' . $data['sale_id_num'];
+            $data['invoice_number'] = $data['sale_id_num'] == NEW_ENTRY ? null : $this->sale->get_info($data['sale_id_num'])->getRow()->invoice_number;
 
-            if ($sale_id == NEW_ENTRY && $this->sale->check_invoice_number_exists($invoice_number)) {
-                $data['error'] = lang('Sales.invoice_number_duplicate', [$invoice_number]);
+            // Resort and filter cart lines for printing
+            $data['cart'] = $this->sale_lib->sort_and_filter_cart($data['cart']);
+
+            if ($data['sale_id_num'] == NEW_ENTRY) {
+                $data['error_message'] = lang('Sales.transaction_failed');
                 return $this->reload($data);
-            } else {
-                $data['invoice_number'] = $invoice_number;
-                $data['sale_status'] = COMPLETED;
-                $sale_type = SALE_TYPE_INVOICE;
-
-                $invoice_type = $this->config['invoice_type'];
-                if (!Sale_lib::isValidInvoiceType($invoice_type)) {
-                    $invoice_type = 'invoice';
-                }
-                $invoice_view = $invoice_type;
-
-                // Save the data to the sales table
-                $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details);
-                $data['sale_id'] = 'POS ' . $data['sale_id_num'];
-
-                // Resort and filter cart lines for printing
-                $data['cart'] = $this->sale_lib->sort_and_filter_cart($data['cart']);
-
-                if ($data['sale_id_num'] == NEW_ENTRY) {
-                    $data['error_message'] = lang('Sales.transaction_failed');
-                    return $this->reload($data);
-                } else {
-                    $data['barcode'] = $this->barcode_lib->generate_receipt_barcode($data['sale_id']);
-                    $this->sale_lib->clear_all();
-                    return view('sales/' . $invoice_view, $data);
-                }
             }
+
+            $data['barcode'] = $this->barcode_lib->generate_receipt_barcode($data['sale_id']);
+            $this->sale_lib->clear_all();
+            return view('sales/' . $invoice_view, $data);
         } elseif ($this->sale_lib->is_work_order_mode()) {
 
             if (!($data['price_work_orders'] == 1)) {
@@ -920,6 +907,7 @@ class Sales extends Secure_Controller
             $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details);
 
             $data['sale_id'] = 'POS ' . $data['sale_id_num'];
+            $data['invoice_number'] = $data['sale_id_num'] == NEW_ENTRY ? null : $this->sale->get_info($data['sale_id_num'])->getRow()->invoice_number;
 
             $data['cart'] = $this->sale_lib->sort_and_filter_cart($data['cart']);
 
@@ -1671,7 +1659,7 @@ class Sales extends Secure_Controller
         $payments = $this->sale_lib->getPayments();
         $employee_id = $this->employee->get_logged_in_employee_info()->person_id;
         $customer_id = $this->sale_lib->get_customer();
-        $invoice_number = $this->sale_lib->get_invoice_number();
+        $invoice_number = null;
         $work_order_number = $this->sale_lib->get_work_order_number();
         $quote_number = $this->sale_lib->get_quote_number();
         $sale_type = $this->sale_lib->get_sale_type();

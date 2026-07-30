@@ -339,11 +339,11 @@ class Sale_lib
     }
 
     /**
-     * @param int $invoice_number
+     * @param string|null $invoice_number
      * @param bool $keep_custom
      * @return void
      */
-    public function set_invoice_number(int $invoice_number, bool $keep_custom = false): void
+    public function set_invoice_number(?string $invoice_number, bool $keep_custom = false): void
     {
         $current_invoice_number = $this->session->get('sales_invoice_number');
 
