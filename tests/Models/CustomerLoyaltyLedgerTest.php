@@ -290,6 +290,250 @@ class CustomerLoyaltyLedgerTest extends CIUnitTestCase
         $this->assertSame($dayEmployeeId, (int) $adjustment->employee_id);
     }
 
+    public function testDayCanCreateCashierCustomerWithOnlyNameAndPhone(): void
+    {
+        $dayEmployeeId = $this->getEmployeeId('NguyenDuyTai');
+        $name = self::TEST_PREFIX . 'nguyen';
+
+        $response = $this
+            ->withSession(['person_id' => $dayEmployeeId, 'menu_group' => 'office'])
+            ->post('/customers/save/-1', [
+                'cashier_form' => '1',
+                'first_name'   => $name,
+                'phone_number' => '0900000000',
+            ]);
+
+        $response->assertOK();
+        $payload = json_decode($response->getJSON(), true);
+
+        $this->assertTrue($payload['success'], json_encode($payload));
+        $this->assertArrayHasKey('customer_id', $payload);
+        $this->assertSame($payload['id'], $payload['customer_id']);
+
+        $customer = model(Customer::class)->get_info((int) $payload['customer_id']);
+        $this->assertSame($payload['customer_name'], $customer->first_name);
+        $this->assertSame('', $customer->last_name);
+        $this->assertSame('0900000000', $customer->phone_number);
+        $this->assertSame('', $customer->email);
+        $this->assertSame('', $customer->address_2);
+        $this->assertSame(0, (int) $customer->points);
+        $this->assertSame(0, (int) $customer->deleted);
+        $this->assertSame($dayEmployeeId, (int) $customer->employee_id);
+    }
+
+    public function testCashierCreatePopupRendersBlankCreateForm(): void
+    {
+        $response = $this
+            ->withSession(['person_id' => $this->getEmployeeId('NguyenDuyTai'), 'menu_group' => 'office'])
+            ->get('/customers/viewCashier');
+
+        $response->assertOK();
+        $html = $response->getBody();
+
+        $this->assertStringContainsString('action="' . site_url('customers/save/-1') . '"', $html);
+        $this->assertStringContainsString('data-mode="create"', $html);
+        $this->assertStringContainsString('name="customer_id" value="-1"', $html);
+        $this->assertStringContainsString('name="person_id" value="-1"', $html);
+        $this->assertStringContainsString('id="first_name"', $html);
+        $this->assertStringContainsString('value="0"', $html);
+    }
+
+    public function testCashierUpdatePopupLoadsRequestedCustomerData(): void
+    {
+        $customerId = $this->createCustomer();
+
+        db_connect()->table('people')
+            ->where('person_id', $customerId)
+            ->update([
+                'first_name'   => self::TEST_PREFIX . 'Update Name',
+                'phone_number' => '0987654321',
+                'address_1'    => 'Update Address 1',
+                'comments'     => 'Update Note',
+            ]);
+        db_connect()->table('customers')
+            ->where('person_id', $customerId)
+            ->update([
+                'account_number' => 'KH-UPDATE',
+                'company_name'   => 'Update Company',
+            ]);
+        $this->assertTrue(model(Customer_loyalty_ledger::class)->setManualPointsTarget(
+            $customerId,
+            6,
+            $this->getEmployeeId('NguyenDuyTai')
+        ));
+
+        $response = $this
+            ->withSession(['person_id' => $this->getEmployeeId('NguyenDuyTai'), 'menu_group' => 'office'])
+            ->get('/customers/viewCashier/' . $customerId);
+
+        $response->assertOK();
+        $html = $response->getBody();
+
+        $this->assertStringContainsString('action="' . site_url('customers/save/' . $customerId) . '"', $html);
+        $this->assertStringContainsString('data-mode="update"', $html);
+        $this->assertStringContainsString('name="customer_id" value="' . $customerId . '"', $html);
+        $this->assertStringContainsString('name="person_id" value="' . $customerId . '"', $html);
+        $this->assertStringContainsString('value="KH-UPDATE"', $html);
+        $this->assertStringContainsString('value="' . self::TEST_PREFIX . 'Update Name Customer"', $html);
+        $this->assertStringContainsString('value="0987654321"', $html);
+        $this->assertStringContainsString('value="Update Address 1"', $html);
+        $this->assertStringContainsString('value="Update Company"', $html);
+        $this->assertStringContainsString('Update Note', $html);
+        $this->assertStringContainsString('value="6"', $html);
+    }
+
+    public function testCashierUpdatePopupDoesNotLoadAnotherCustomer(): void
+    {
+        $firstCustomerId = $this->createCustomer();
+        $secondCustomerId = $this->createCustomer();
+
+        db_connect()->table('people')
+            ->where('person_id', $firstCustomerId)
+            ->update(['first_name' => self::TEST_PREFIX . 'First Customer']);
+        db_connect()->table('people')
+            ->where('person_id', $secondCustomerId)
+            ->update(['first_name' => self::TEST_PREFIX . 'Second Customer']);
+
+        $response = $this
+            ->withSession(['person_id' => $this->getEmployeeId('NguyenDuyTai1'), 'menu_group' => 'office'])
+            ->get('/customers/viewCashier/' . $secondCustomerId);
+
+        $response->assertOK();
+        $html = $response->getBody();
+
+        $this->assertStringContainsString('value="' . self::TEST_PREFIX . 'Second Customer Customer"', $html);
+        $this->assertStringNotContainsString(self::TEST_PREFIX . 'First Customer', $html);
+    }
+
+    public function testCashierUpdatePopupRejectsMissingCustomerAndAggregate(): void
+    {
+        $missingResponse = $this
+            ->withSession(['person_id' => $this->getEmployeeId('NguyenDuyTai'), 'menu_group' => 'office'])
+            ->get('/customers/viewCashier/99999999');
+        $missingResponse->assertStatus(404);
+
+        $customerId = $this->createCustomer();
+        $aggregateResponse = $this
+            ->withSession(['person_id' => $this->getEmployeeId('NguyenDuyTai2'), 'menu_group' => 'office'])
+            ->get('/customers/viewCashier/' . $customerId);
+        $aggregateResponse->assertStatus(403);
+    }
+
+    public function testNightCanCreateCashierCustomerAndRequestedPointsAreNotSavedDirectly(): void
+    {
+        $nightEmployeeId = $this->getEmployeeId('NguyenDuyTai1');
+        $name = self::TEST_PREFIX . 'night';
+
+        $response = $this
+            ->withSession(['person_id' => $nightEmployeeId, 'menu_group' => 'office'])
+            ->post('/customers/save/-1', [
+                'cashier_form'     => '1',
+                'first_name'       => $name,
+                'phone_number'     => '0911111111',
+                'requested_points' => '9',
+            ]);
+
+        $response->assertOK();
+        $payload = json_decode($response->getJSON(), true);
+
+        $this->assertTrue($payload['success'], json_encode($payload));
+        $this->assertSame(0, $this->getCustomerPoints((int) $payload['customer_id']));
+        $this->assertSame(0, $this->adjustmentCountForCustomer((int) $payload['customer_id']));
+    }
+
+    public function testCashierUpdatePreservesHiddenCustomerFields(): void
+    {
+        $customerId = $this->createCustomer();
+        $dayEmployeeId = $this->getEmployeeId('NguyenDuyTai');
+        db_connect()->table('people')
+            ->where('person_id', $customerId)
+            ->update([
+                'last_name' => 'HiddenLast',
+                'gender'    => 1,
+                'email'     => self::TEST_PREFIX . 'hidden@example.test',
+                'address_2' => 'Hidden Address 2',
+                'city'      => 'Hidden City',
+                'state'     => 'Hidden State',
+                'zip'       => 'Hidden Zip',
+                'country'   => 'Hidden Country',
+            ]);
+        db_connect()->table('customers')
+            ->where('person_id', $customerId)
+            ->update([
+                'tax_id'        => 'HIDDEN-TAX',
+                'discount'      => '3.00',
+                'discount_type' => FIXED,
+                'points'        => 5,
+            ]);
+
+        $response = $this
+            ->withSession(['person_id' => $dayEmployeeId, 'menu_group' => 'office'])
+            ->post('/customers/save/' . $customerId, [
+                'cashier_form' => '1',
+                'first_name'   => self::TEST_PREFIX . 'updated',
+                'phone_number' => '0922222222',
+                'address_1'    => 'Visible Address',
+                'company_name' => 'Visible Company',
+                'comments'     => 'Visible Note',
+            ]);
+
+        $response->assertOK();
+        $payload = json_decode($response->getJSON(), true);
+        $this->assertTrue($payload['success'], json_encode($payload));
+
+        $customer = model(Customer::class)->get_info($customerId);
+        $this->assertSame(self::TEST_PREFIX . 'updated', $customer->first_name);
+        $this->assertSame('0922222222', $customer->phone_number);
+        $this->assertSame('Visible Address', $customer->address_1);
+        $this->assertSame('Visible Company', $customer->company_name);
+        $this->assertSame('Visible Note', $customer->comments);
+        $this->assertSame('HiddenLast', $customer->last_name);
+        $this->assertSame('1', (string) $customer->gender);
+        $this->assertSame(self::TEST_PREFIX . 'hidden@example.test', $customer->email);
+        $this->assertSame('Hidden Address 2', $customer->address_2);
+        $this->assertSame('Hidden City', $customer->city);
+        $this->assertSame('Hidden State', $customer->state);
+        $this->assertSame('Hidden Zip', $customer->zip);
+        $this->assertSame('Hidden Country', $customer->country);
+        $this->assertSame('HIDDEN-TAX', $customer->tax_id);
+        $this->assertSame('3.00', (string) $customer->discount);
+        $this->assertSame(FIXED, (int) $customer->discount_type);
+        $this->assertSame(5, (int) $customer->points);
+    }
+
+    public function testCashierCustomerValidationFailureReturnsFieldError(): void
+    {
+        $response = $this
+            ->withSession(['person_id' => $this->getEmployeeId('NguyenDuyTai'), 'menu_group' => 'office'])
+            ->post('/customers/save/-1', [
+                'cashier_form' => '1',
+                'first_name'   => '',
+                'phone_number' => '0933333333',
+            ]);
+
+        $response->assertOK();
+        $payload = json_decode($response->getJSON(), true);
+
+        $this->assertFalse($payload['success']);
+        $this->assertArrayHasKey('errors', $payload);
+        $this->assertArrayHasKey('first_name', $payload['errors']);
+    }
+
+    public function testAggregateCannotCreateCashierCustomer(): void
+    {
+        $response = $this
+            ->withSession(['person_id' => $this->getEmployeeId('NguyenDuyTai2'), 'menu_group' => 'office'])
+            ->post('/customers/save/-1', [
+                'cashier_form' => '1',
+                'first_name'   => self::TEST_PREFIX . 'aggregate',
+            ]);
+
+        $response->assertStatus(403);
+        $payload = json_decode($response->getJSON(), true);
+        $this->assertFalse($payload['success']);
+        $this->assertArrayHasKey('errors', $payload);
+    }
+
     public function testAggregateCannotSaveManualPointsThroughEndpoint(): void
     {
         $customerId = $this->createCustomer();

@@ -29,7 +29,7 @@ $formatTendered = static function ($amount): string {
     return to_currency((string) abs((float) $amount));
 };
 
-$receiptNumber = !empty($invoice_number) ? $invoice_number : $sale_id;
+$receiptNumber = !empty($invoice_number) ? $invoice_number : '';
 $serviceCharge = (float) ($service_charge ?? 0);
 $amountInWords = '';
 
@@ -72,10 +72,12 @@ foreach (['to_currency_text', 'to_vietnamese_words', 'amount_to_words'] as $amou
             <span><?= esc($transaction_time) ?></span>
         </div>
 
-        <div class="k58-line">
-            <span>Mã hóa đơn</span>
-            <span><?= esc($receiptNumber) ?></span>
-        </div>
+        <?php if ($receiptNumber !== '') { ?>
+            <div class="k58-line">
+                <span>Mã hóa đơn</span>
+                <span><?= esc($receiptNumber) ?></span>
+            </div>
+        <?php } ?>
 
         <?php if (!empty($customer)) { ?>
             <div class="k58-line">

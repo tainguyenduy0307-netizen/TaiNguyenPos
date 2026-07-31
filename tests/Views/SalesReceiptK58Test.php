@@ -93,9 +93,23 @@ class SalesReceiptK58Test extends CIUnitTestCase
             'invoice_number' => '',
         ]));
 
-        $this->assertStringContainsString('POS 1001', $html);
+        $this->assertStringContainsString('HÓA ĐƠN BÁN HÀNG', $html);
+        $this->assertStringNotContainsString('Mã hóa đơn', $html);
+        $this->assertStringNotContainsString('POS 1001', $html);
         $this->assertStringNotContainsString('Điểm:', $html);
         $this->assertStringContainsString('Cảm ơn quý khách', $html);
+    }
+
+    public function testReceiptK58DoesNotRenderTemporarySaleLabels(): void
+    {
+        $html = view('sales/receipt_k58', $this->receiptData([
+            'invoice_number' => '',
+        ]));
+
+        $this->assertStringContainsString('HÓA ĐƠN BÁN HÀNG', $html);
+        $this->assertStringNotContainsString('PHIẾU TẠM TÍNH', $html);
+        $this->assertStringNotContainsString('CHƯA THANH TOÁN', $html);
+        $this->assertStringNotContainsString('TẠM TÍNH', $html);
     }
 
     public function testReceiptK58RendersServiceChargeAndDiscountOnlyWhenPositive(): void
@@ -156,6 +170,74 @@ class SalesReceiptK58Test extends CIUnitTestCase
 
         $this->assertStringContainsString("\$template === 'receipt_k58'", $receiptView);
         $this->assertStringContainsString("base_url('css/receipt_k58.css')", $receiptView);
+    }
+
+    public function testReceiptK58WrapperDoesNotRenderReceiptControlButtons(): void
+    {
+        $receiptView = file_get_contents(APPPATH . 'Views/sales/receipt.php');
+
+        $this->assertStringContainsString('if (!$isK58Template)', $receiptView);
+        $this->assertStringContainsString('id="control_buttons"', $receiptView);
+        $this->assertStringContainsString("\$embeddedPrint = service('request')->getGet('embedded_print') === '1';", $receiptView);
+        $this->assertStringContainsString("'auto_print'              => !\$embeddedPrint && (\$isK58Template || \$print_after_sale)", $receiptView);
+        $this->assertStringContainsString("'use_browser_print'       => \$isK58Template", $receiptView);
+    }
+
+    public function testReceiptPrintPartialCanForceBrowserPrintForK58(): void
+    {
+        $printPartial = file_get_contents(APPPATH . 'Views/partial/print_receipt.php');
+
+        $this->assertStringContainsString('$use_browser_print = $use_browser_print ?? false;', $printPartial);
+        $this->assertStringContainsString('window.print();', $printPartial);
+        $this->assertStringContainsString('return;', $printPartial);
+        $this->assertStringContainsString('if ($auto_print)', $printPartial);
+        $this->assertStringContainsString('window.frameElement !== null', $printPartial);
+    }
+
+    public function testRegisterUsesDelegatedCashierPrintHandlers(): void
+    {
+        $registerView = file_get_contents(APPPATH . 'Views/sales/register.php');
+
+        $this->assertStringContainsString('id="cashier-preview-print"', $registerView);
+        $this->assertStringContainsString('id="cashier-complete-sale"', $registerView);
+        $this->assertStringContainsString('id="cashier-print-frame"', $registerView);
+        $this->assertStringContainsString('id="cashier-home-button"', $registerView);
+        $this->assertStringContainsString("site_url('home')", $registerView);
+        $this->assertStringContainsString(".off('click.cashierPreviewPrint', '#cashier-preview-print')", $registerView);
+        $this->assertStringContainsString(".off('click.cashierCompleteSale', '#cashier-complete-sale')", $registerView);
+        $this->assertStringContainsString('function printReceiptInFrame(receiptUrl)', $registerView);
+        $this->assertStringContainsString('embedded_print=1&_cashier_print=', $registerView);
+        $this->assertStringContainsString("frameWindow.addEventListener('afterprint', finish, { once: true });", $registerView);
+        $this->assertStringContainsString("frameWindow.removeEventListener('afterprint', finish);", $registerView);
+        $this->assertStringContainsString("window.addEventListener('focus', finishFromWindowFocus);", $registerView);
+        $this->assertStringContainsString('fallbackTimer = setTimeout(finish, 60000);', $registerView);
+        $this->assertStringNotContainsString("frameWindow.print();\n                    resolve();", $registerView);
+        $this->assertStringContainsString('previewReceipt', $registerView);
+        $this->assertStringContainsString('completeSaleForCashier', $registerView);
+        $this->assertStringNotContainsString("window.open('about:blank'", $registerView);
+        $this->assertStringNotContainsString('completeSaleInPopup', $registerView);
+        $this->assertStringNotContainsString('Vui lòng cho phép cửa sổ bật lên để in hóa đơn.', $registerView);
+    }
+
+    public function testRegisterPrintIframeAndHomeButtonAreScopedInCss(): void
+    {
+        $css = file_get_contents(FCPATH . 'css/register.css');
+
+        $this->assertStringContainsString('body.sales-register-screen #cashier-print-frame', $css);
+        $this->assertStringContainsString('pointer-events: none;', $css);
+        $this->assertStringContainsString('body.sales-register-screen #cashier-home-button', $css);
+    }
+
+    public function testSalesControllerProvidesK58PreviewAndAjaxReceiptUrl(): void
+    {
+        $salesController = file_get_contents(APPPATH . 'Controllers/Sales.php');
+
+        $this->assertStringContainsString('public function getPreviewReceipt()', $salesController);
+        $this->assertStringContainsString("\$data['receipt_template_view'] = 'receipt_k58';", $salesController);
+        $this->assertStringContainsString("'invoice_number'          => ''", $salesController);
+        $this->assertStringContainsString("'success'     => true", $salesController);
+        $this->assertStringContainsString("'receipt_url' => site_url(\"sales/receipt/", $salesController);
+        $this->assertStringContainsString("sale_id_num", $salesController);
     }
 
     /**

@@ -185,4 +185,91 @@ class Sale_libPaymentTest extends CIUnitTestCase
         $this->assertArrayNotHasKey('credit', $payments);
         $this->assertArrayHasKey('debit', $payments);
     }
+
+    public function testDeleteItemRemovesFirstLineByCartKey(): void
+    {
+        $this->saleLib->set_cart([
+            1 => $this->cartItem(101, 1),
+            2 => $this->cartItem(102, 2),
+            3 => $this->cartItem(103, 3),
+        ]);
+
+        $this->assertTrue($this->saleLib->delete_item(1));
+
+        $cart = $this->saleLib->get_cart();
+        $this->assertArrayNotHasKey(1, $cart);
+        $this->assertArrayHasKey(2, $cart);
+        $this->assertArrayHasKey(3, $cart);
+    }
+
+    public function testDeleteItemRemovesMiddleLineWhenCartKeysAreNotContinuous(): void
+    {
+        $this->saleLib->set_cart([
+            1 => $this->cartItem(101, 1),
+            3 => $this->cartItem(103, 3),
+            8 => $this->cartItem(108, 8),
+        ]);
+
+        $this->assertTrue($this->saleLib->delete_item(3));
+
+        $cart = $this->saleLib->get_cart();
+        $this->assertSame([1, 8], array_keys($cart));
+        $this->assertSame(101, $cart[1]['item_id']);
+        $this->assertSame(108, $cart[8]['item_id']);
+    }
+
+    public function testDeleteItemRemovesLastLineByCartKey(): void
+    {
+        $this->saleLib->set_cart([
+            1 => $this->cartItem(101, 1),
+            2 => $this->cartItem(102, 2),
+            9 => $this->cartItem(109, 9),
+        ]);
+
+        $this->assertTrue($this->saleLib->delete_item(9));
+
+        $cart = $this->saleLib->get_cart();
+        $this->assertArrayHasKey(1, $cart);
+        $this->assertArrayHasKey(2, $cart);
+        $this->assertArrayNotHasKey(9, $cart);
+    }
+
+    public function testDeleteItemReturnsFalseForStaleLineAndLeavesCartUntouched(): void
+    {
+        $cart = [
+            2 => $this->cartItem(102, 2),
+            5 => $this->cartItem(105, 5),
+        ];
+        $this->saleLib->set_cart($cart);
+
+        $this->assertFalse($this->saleLib->delete_item(1));
+        $this->assertSame($cart, $this->saleLib->get_cart());
+    }
+
+    public function testDeleteItemCanBeCalledTwiceForSameLineWithoutError(): void
+    {
+        $this->saleLib->set_cart([
+            1 => $this->cartItem(101, 1),
+            4 => $this->cartItem(104, 4),
+        ]);
+
+        $this->assertTrue($this->saleLib->delete_item(1));
+        $this->assertFalse($this->saleLib->delete_item(1));
+
+        $cart = $this->saleLib->get_cart();
+        $this->assertSame([4], array_keys($cart));
+        $this->assertSame(104, $cart[4]['item_id']);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function cartItem(int $itemId, int $line): array
+    {
+        return [
+            'item_id'   => $itemId,
+            'line'      => $line,
+            'item_type' => ITEM,
+        ];
+    }
 }

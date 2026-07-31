@@ -178,6 +178,28 @@ class Customer extends Person
     }
 
     /**
+     * Gets the sum of completed due payments for a customer.
+     *
+     * @param array<int>|null $businessUnitIds Null keeps the legacy global behavior.
+     */
+    public function get_due_balance(int $customer_id, ?array $businessUnitIds = null): float
+    {
+        if ($customer_id === NEW_ENTRY) {
+            return 0.0;
+        }
+
+        $builder = $this->db->table('sales AS sales');
+        $builder->select('COALESCE(SUM(sales_payments.payment_amount - sales_payments.cash_refund), 0) AS due_balance', false);
+        $builder->join('sales_payments AS sales_payments', 'sales_payments.sale_id = sales.sale_id');
+        $builder->where('sales.customer_id', $customer_id);
+        $builder->where('sales.sale_status', COMPLETED);
+        $builder->like('sales_payments.payment_type', lang('Sales.due'));
+        $this->applySalesBusinessUnitScope($builder, $businessUnitIds);
+
+        return (float) $builder->get()->getRow()->due_balance;
+    }
+
+    /**
      * @param array<int>|null $businessUnitIds
      */
     private function applySalesBusinessUnitScope(BaseBuilder $builder, ?array $businessUnitIds): void
@@ -194,6 +216,17 @@ class Customer extends Person
         }
 
         $builder->whereIn('sales.business_unit_id', $businessUnitIds);
+    }
+
+    public function getLastDatabaseError(): string
+    {
+        $error = $this->db->error();
+
+        if (!is_array($error) || empty($error['code'])) {
+            return '';
+        }
+
+        return trim($error['code'] . ' ' . ($error['message'] ?? ''));
     }
 
     /**

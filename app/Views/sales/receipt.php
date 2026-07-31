@@ -9,12 +9,14 @@
 use App\Models\Employee;
 
 $template = $receipt_template_view ?? 'receipt_default';
+$isK58Template = $template === 'receipt_k58';
+$embeddedPrint = service('request')->getGet('embedded_print') === '1';
 
 ?>
 
 <?= view('partial/header') ?>
 
-<?php if ($template === 'receipt_k58'): ?>
+<?php if ($isK58Template): ?>
     <link rel="stylesheet" href="<?= base_url('css/receipt_k58.css') ?>">
 <?php endif; ?>
 
@@ -49,24 +51,32 @@ if (isset($error_message)) {
     </script>
 <?php endif; ?>
 
-<?= view('partial/print_receipt', ['print_after_sale' => $print_after_sale, 'selected_printer' => 'receipt_printer']) ?>
+<?= view('partial/print_receipt', [
+    'print_after_sale'        => $print_after_sale,
+    'selected_printer'        => 'receipt_printer',
+    'auto_print'              => !$embeddedPrint && ($isK58Template || $print_after_sale),
+    'use_browser_print'       => $isK58Template,
+    'auto_return_after_print' => !$isK58Template && $print_after_sale,
+]) ?>
 
-<div class="print_hide" id="control_buttons" style="text-align: right;">
-    <a href="javascript:printdoc();">
-        <div class="btn btn-info btn-sm" id="show_print_button"><?= '<span class="glyphicon glyphicon-print">&nbsp;</span>' . lang('Common.print') ?></div>
-    </a>
-    <?php if (!empty($customer_email)): ?>
-        <a href="javascript:void(0);">
-            <div class="btn btn-info btn-sm" id="show_email_button"><?= '<span class="glyphicon glyphicon-envelope">&nbsp;</span>' . lang('Sales.send_receipt') ?></div>
+<?php if (!$isK58Template): ?>
+    <div class="print_hide" id="control_buttons" style="text-align: right;">
+        <a href="javascript:printdoc();">
+            <div class="btn btn-info btn-sm" id="show_print_button"><?= '<span class="glyphicon glyphicon-print">&nbsp;</span>' . lang('Common.print') ?></div>
         </a>
-    <?php endif; ?>
-    <?= anchor('sales', '<span class="glyphicon glyphicon-shopping-cart">&nbsp;</span>' . lang('Sales.register'), ['class' => 'btn btn-info btn-sm', 'id' => 'show_sales_button']) ?>
-    <?php
-    $employee = model(Employee::class);
-    if ($employee->has_grant('reports_sales', session('person_id'))): ?>
-        <?= anchor('sales/manage', '<span class="glyphicon glyphicon-list-alt">&nbsp;</span>' . lang('Sales.takings'), ['class' => 'btn btn-info btn-sm', 'id' => 'show_takings_button']) ?>
-    <?php endif; ?>
-</div>
+        <?php if (!empty($customer_email)): ?>
+            <a href="javascript:void(0);">
+                <div class="btn btn-info btn-sm" id="show_email_button"><?= '<span class="glyphicon glyphicon-envelope">&nbsp;</span>' . lang('Sales.send_receipt') ?></div>
+            </a>
+        <?php endif; ?>
+        <?= anchor('sales', '<span class="glyphicon glyphicon-shopping-cart">&nbsp;</span>' . lang('Sales.register'), ['class' => 'btn btn-info btn-sm', 'id' => 'show_sales_button']) ?>
+        <?php
+        $employee = model(Employee::class);
+        if ($employee->has_grant('reports_sales', session('person_id'))): ?>
+            <?= anchor('sales/manage', '<span class="glyphicon glyphicon-list-alt">&nbsp;</span>' . lang('Sales.takings'), ['class' => 'btn btn-info btn-sm', 'id' => 'show_takings_button']) ?>
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
 
 <?= view('sales/' . $template) ?>
 

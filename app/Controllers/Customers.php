@@ -227,15 +227,98 @@ class Customers extends Persons
         return view("customers/form", $data);
     }
 
+    public function getViewCashier(int $customer_id = NEW_ENTRY): ResponseInterface|string
+    {
+        if ($customer_id == null) $customer_id = NEW_ENTRY;
+
+        if ($this->getAccountScope() === Employee::ACCOUNT_SCOPE_AGGREGATE) {
+            return $this->response
+                ->setStatusCode(403)
+                ->setBody('<div class="alert alert-danger">' . esc(lang('Sales.not_authorized')) . '</div>');
+        }
+
+        if ((int) $customer_id !== NEW_ENTRY && !$this->customer->exists((int) $customer_id)) {
+            return $this->response
+                ->setStatusCode(404)
+                ->setBody('<div class="alert alert-danger">' . esc(lang('Customers.error_adding_updating')) . '</div>');
+        }
+
+        $info = $this->customer->get_info($customer_id);
+
+        if ((int) $customer_id !== NEW_ENTRY && (int) ($info->deleted ?? 0) === 1) {
+            return $this->response
+                ->setStatusCode(404)
+                ->setBody('<div class="alert alert-danger">' . esc(lang('Customers.error_adding_updating')) . '</div>');
+        }
+
+        foreach (get_object_vars($info) as $property => $value) {
+            $info->$property = $value;
+        }
+
+        if (empty($info->person_id) || empty($info->date) || empty($info->employee_id)) {
+            $info->date = date('Y-m-d H:i:s');
+            $info->employee_id = $this->employee->get_logged_in_employee_info()->person_id;
+        }
+
+        $data['person_info'] = $info;
+        $data['customer_id'] = (int) $customer_id;
+        $data['cashier_mode'] = (int) $customer_id === NEW_ENTRY ? 'create' : 'update';
+        $data['can_edit_points'] = $this->canEditCustomerPoints() && (int) $customer_id !== NEW_ENTRY;
+        $data['loyalty_totals'] = $customer_id === NEW_ENTRY
+            ? [
+                'eligible_amount'    => 0.0,
+                'automatic_points'  => 0,
+                'manual_adjustment' => 0,
+                'points'            => 0,
+                'remainder_amount'  => 0.0,
+            ]
+            : $this->customer_loyalty_ledger->getTotals((int) $customer_id);
+        $data['due_balance'] = $customer_id === NEW_ENTRY
+            ? 0.0
+            : $this->customer->get_due_balance((int) $customer_id, $this->getCustomerHistoryBusinessUnitIds());
+        $data['stats'] = $this->customer->get_stats($customer_id, $this->getCustomerHistoryBusinessUnitIds());
+
+        return view('customers/form_cashier', $data);
+    }
+
     /**
      * Inserts/updates a customer
      * @return ResponseInterface
      */
     public function postSave(int $customer_id = NEW_ENTRY): ResponseInterface
     {
-        $first_name = $this->request->getPost('first_name');
-        $last_name = $this->request->getPost('last_name');
-        $email = strtolower($this->request->getPost('email', FILTER_SANITIZE_EMAIL));
+        $cashierForm = $this->request->getPost('cashier_form') === '1';
+        $errors = [];
+
+        if ($cashierForm && $this->getAccountScope() === Employee::ACCOUNT_SCOPE_AGGREGATE) {
+            return $this->response
+                ->setStatusCode(403)
+                ->setJSON([
+                    'success' => false,
+                    'message' => lang('Sales.not_authorized'),
+                    'id'      => $customer_id,
+                    'errors'  => ['account_scope' => lang('Sales.not_authorized')],
+                ]);
+        }
+
+        $existingCustomerInfo = $cashierForm ? $this->customer->get_info($customer_id) : null;
+        $isCashierNew = $cashierForm && ((int) $customer_id === NEW_ENTRY || !$this->customer->exists($customer_id));
+        $first_name = trim((string) $this->request->getPost('first_name'));
+        $last_name = $cashierForm ? ($isCashierNew ? '' : (string) ($existingCustomerInfo->last_name ?? '')) : (string) $this->request->getPost('last_name');
+        $email = $cashierForm
+            ? ($isCashierNew ? '' : (string) ($existingCustomerInfo->email ?? ''))
+            : strtolower((string) $this->request->getPost('email', FILTER_SANITIZE_EMAIL));
+
+        if ($cashierForm && $first_name === '') {
+            $errors['first_name'] = lang('Common.first_name_required');
+
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => lang('Common.correct_errors'),
+                'id'      => $customer_id,
+                'errors'  => $errors,
+            ]);
+        }
 
         // Format first and last name properly
         $first_name = $this->nameize($first_name);
@@ -244,33 +327,45 @@ class Customers extends Persons
         $person_data = [
             'first_name'   => $first_name,
             'last_name'    => $last_name,
-            'gender'       => $this->request->getPost('gender', FILTER_SANITIZE_NUMBER_INT),
+            'gender'       => $cashierForm ? ($isCashierNew ? null : ($existingCustomerInfo->gender ?? null)) : $this->request->getPost('gender', FILTER_SANITIZE_NUMBER_INT),
             'email'        => $email,
-            'phone_number' => $this->request->getPost('phone_number'),
-            'address_1'    => $this->request->getPost('address_1'),
-            'address_2'    => $this->request->getPost('address_2'),
-            'city'         => $this->request->getPost('city'),
-            'state'        => $this->request->getPost('state'),
-            'zip'          => $this->request->getPost('zip'),
-            'country'      => $this->request->getPost('country'),
-            'comments'     => $this->request->getPost('comments')
+            'phone_number' => (string) $this->request->getPost('phone_number'),
+            'address_1'    => (string) $this->request->getPost('address_1'),
+            'address_2'    => $cashierForm ? ($isCashierNew ? '' : ($existingCustomerInfo->address_2 ?? '')) : $this->request->getPost('address_2'),
+            'city'         => $cashierForm ? ($isCashierNew ? '' : ($existingCustomerInfo->city ?? '')) : $this->request->getPost('city'),
+            'state'        => $cashierForm ? ($isCashierNew ? '' : ($existingCustomerInfo->state ?? '')) : $this->request->getPost('state'),
+            'zip'          => $cashierForm ? ($isCashierNew ? '' : ($existingCustomerInfo->zip ?? '')) : $this->request->getPost('zip'),
+            'country'      => $cashierForm ? ($isCashierNew ? '' : ($existingCustomerInfo->country ?? '')) : $this->request->getPost('country'),
+            'comments'     => (string) $this->request->getPost('comments')
         ];
 
-        $date_formatter = date_create_from_format($this->config['dateformat'] . ' ' . $this->config['timeformat'], $this->request->getPost('date'));
+        if ($cashierForm) {
+            $customerDate = $isCashierNew || empty($existingCustomerInfo->date) ? date('Y-m-d H:i:s') : $existingCustomerInfo->date;
+        } else {
+            $date_formatter = date_create_from_format($this->config['dateformat'] . ' ' . $this->config['timeformat'], $this->request->getPost('date'));
+            $customerDate = $date_formatter->format('Y-m-d H:i:s');
+        }
 
         $customer_data = [
-            'consent'           => $this->request->getPost('consent') != null,
+            'consent'           => $cashierForm ? true : $this->request->getPost('consent') != null,
             'account_number'    => $this->request->getPost('account_number') == '' ? null : $this->request->getPost('account_number'),
-            'tax_id'            => $this->request->getPost('tax_id'),
+            'tax_id'            => $cashierForm ? ($isCashierNew ? '' : ($existingCustomerInfo->tax_id ?? '')) : $this->request->getPost('tax_id'),
             'company_name'      => $this->request->getPost('company_name') == '' ? null : $this->request->getPost('company_name'),
-            'discount'          => $this->request->getPost('discount') == '' ? 0.00 : parse_decimals($this->request->getPost('discount')),
-            'discount_type'     => $this->request->getPost('discount_type') == null ? PERCENT : $this->request->getPost('discount_type', FILTER_SANITIZE_NUMBER_INT),
-            'package_id'        => $this->request->getPost('package_id') == '' ? null : $this->request->getPost('package_id'),
-            'taxable'           => $this->request->getPost('taxable') != null,
-            'date'              => $date_formatter->format('Y-m-d H:i:s'),
-            'employee_id'       => $this->request->getPost('employee_id', FILTER_SANITIZE_NUMBER_INT),
-            'sales_tax_code_id' => $this->request->getPost('sales_tax_code_id') == '' ? null : $this->request->getPost('sales_tax_code_id', FILTER_SANITIZE_NUMBER_INT)
+            'discount'          => $cashierForm ? ($isCashierNew ? 0.00 : ($existingCustomerInfo->discount ?? 0.00)) : ($this->request->getPost('discount') == '' ? 0.00 : parse_decimals($this->request->getPost('discount'))),
+            'discount_type'     => $cashierForm ? ($isCashierNew ? PERCENT : ($existingCustomerInfo->discount_type ?? PERCENT)) : ($this->request->getPost('discount_type') == null ? PERCENT : $this->request->getPost('discount_type', FILTER_SANITIZE_NUMBER_INT)),
+            'package_id'        => $cashierForm ? ($isCashierNew ? null : ($existingCustomerInfo->package_id ?? null)) : ($this->request->getPost('package_id') == '' ? null : $this->request->getPost('package_id')),
+            'taxable'           => $cashierForm ? (!$isCashierNew && (bool) ($existingCustomerInfo->taxable ?? false)) : $this->request->getPost('taxable') != null,
+            'date'              => $customerDate,
+            'employee_id'       => $cashierForm
+                ? $this->employee->get_logged_in_employee_info()->person_id
+                : $this->request->getPost('employee_id', FILTER_SANITIZE_NUMBER_INT),
+            'sales_tax_code_id' => $cashierForm ? ($isCashierNew ? null : ($existingCustomerInfo->sales_tax_code_id ?? null)) : ($this->request->getPost('sales_tax_code_id') == '' ? null : $this->request->getPost('sales_tax_code_id', FILTER_SANITIZE_NUMBER_INT))
         ];
+
+        if ($isCashierNew) {
+            $customer_data['points'] = 0;
+            $customer_data['deleted'] = 0;
+        }
 
         if ($this->customer->save_customer($person_data, $customer_data, $customer_id)) {
             // Save customer to Mailchimp selected list    // TODO: addOrUpdateMember should be refactored. Potentially pass an array or object instead of 6 parameters.
@@ -287,22 +382,32 @@ class Customers extends Persons
             // New customer
             if ($customer_id == NEW_ENTRY) {
                 return $this->response->setJSON([
-                    'success' => true,
-                    'message' => lang('Customers.successful_adding') . ' ' . $first_name . ' ' . $last_name,
-                    'id'      => $customer_data['person_id']
+                    'success'       => true,
+                    'message'       => lang('Customers.successful_adding') . ' ' . $first_name . ' ' . $last_name,
+                    'id'            => $customer_data['person_id'],
+                    'customer_id'   => $customer_data['person_id'],
+                    'customer_name' => trim($first_name . ' ' . $last_name),
                 ]);
             } else { // Existing customer
                 return $this->response->setJSON([
-                    'success' => true,
-                    'message' => lang('Customers.successful_updating') . ' ' . $first_name . ' ' . $last_name,
-                    'id'      => $customer_id
+                    'success'       => true,
+                    'message'       => lang('Customers.successful_updating') . ' ' . $first_name . ' ' . $last_name,
+                    'id'            => $customer_id,
+                    'customer_id'   => $customer_id,
+                    'customer_name' => trim($first_name . ' ' . $last_name),
                 ]);
             }
         } else { // Failure
+            $databaseError = $this->customer->getLastDatabaseError();
+            if ($databaseError !== '') {
+                $errors['database'] = $databaseError;
+            }
+
             return $this->response->setJSON([
                 'success' => false,
-                'message' => lang('Customers.error_adding_updating') . ' ' . $first_name . ' ' . $last_name,
-                'id'      => NEW_ENTRY
+                'message' => trim(lang('Customers.error_adding_updating') . ' ' . $first_name . ' ' . $last_name),
+                'id'      => NEW_ENTRY,
+                'errors'  => $errors,
             ]);
         }
     }

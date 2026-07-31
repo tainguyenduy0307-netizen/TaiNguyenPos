@@ -488,6 +488,23 @@ class Sales extends Secure_Controller
             }
         }
 
+        if (!isset($data['error']) && $this->request->getPost('complete_after_payment') == '1') {
+            $cart = $this->sale_lib->get_cart();
+            $tax_details = $this->tax_lib->get_taxes($cart);
+            $totals = $this->sale_lib->get_totals($tax_details[0]);
+
+            if ($totals['payments_cover_total']) {
+                return $this->postComplete();
+            }
+        }
+
+        if ($this->request->isAJAX()) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => $data['error'] ?? lang('Sales.payment_not_cover_total'),
+            ]);
+        }
+
         return $this->reload($data);
     }
 
@@ -666,17 +683,18 @@ class Sales extends Secure_Controller
     /**
      * Deletes an item specified in the parameter from the shopping cart. Used in app/Views/sales/register.php
      *
-     * @param int $item_id
+     * @param int $line
      * @return ResponseInterface
      * @throws ReflectionException
      * @noinspection PhpUnused
      */
-    public function getDeleteItem(int $item_id): ResponseInterface|string
+    public function getDeleteItem(int $line): ResponseInterface|string
     {
         $this->requireCurrentBusinessUnitId();
-        $this->sale_lib->delete_item($item_id);
 
-        $this->sale_lib->empty_payments();
+        if ($this->sale_lib->delete_item($line)) {
+            $this->sale_lib->empty_payments();
+        }
 
         return $this->reload();
     }
@@ -707,7 +725,7 @@ class Sales extends Secure_Controller
      * @throws ReflectionException
      * @noinspection PhpUnused
      */
-    public function postComplete(): string    // TODO: this function is huge.  Probably should be refactored.
+    public function postComplete(): ResponseInterface|string    // TODO: this function is huge.  Probably should be refactored.
     {
         $this->requireCurrentBusinessUnitId();
         $sale_id = $this->sale_lib->get_sale_id();
@@ -776,6 +794,13 @@ class Sales extends Secure_Controller
 
         // Prevent negative total sales (fraud/theft vector) - returns can have negative totals for legitimate refunds
         if ($this->sale_lib->get_mode() != 'return' && bccomp($totals['total'], '0') < 0) {
+            if ($this->request->isAJAX()) {
+                return $this->response->setJSON([
+                    'success' => false,
+                    'message' => lang('Sales.negative_total_invalid'),
+                ]);
+            }
+
             $data['error'] = lang('Sales.negative_total_invalid');
             return $this->reload($data);
         }
@@ -912,6 +937,13 @@ class Sales extends Secure_Controller
             $data['cart'] = $this->sale_lib->sort_and_filter_cart($data['cart']);
 
             if ($data['sale_id_num'] == NEW_ENTRY) {
+                if ($this->request->isAJAX()) {
+                    return $this->response->setJSON([
+                        'success' => false,
+                        'message' => lang('Sales.transaction_failed'),
+                    ]);
+                }
+
                 $data['error_message'] = lang('Sales.transaction_failed');
                 return $this->reload($data);
             } else {
@@ -925,9 +957,79 @@ class Sales extends Secure_Controller
                 $data['receipt_template_view'] = $receipt_template;
 
                 $this->sale_lib->clear_all();
+
+                if ($this->request->isAJAX()) {
+                    return $this->response->setJSON([
+                        'success'     => true,
+                        'sale_id'     => $data['sale_id_num'],
+                        'receipt_url' => site_url("sales/receipt/{$data['sale_id_num']}"),
+                    ]);
+                }
+
                 return view('sales/receipt', $data);
             }
         }
+    }
+
+    public function getPreviewReceipt(): string
+    {
+        $this->requireCurrentBusinessUnitId();
+
+        $data = $this->buildCurrentCartReceiptData();
+        $data['receipt_template_view'] = 'receipt_k58';
+        $data['print_after_sale'] = true;
+        $data['email_receipt'] = false;
+
+        return view('sales/receipt', $data);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildCurrentCartReceiptData(): array
+    {
+        $cart = $this->sale_lib->get_cart();
+        $taxDetails = $this->tax_lib->get_taxes($cart);
+        $taxes = $taxDetails[0];
+        $totals = $this->sale_lib->get_totals($taxes);
+
+        $employeeInfo = $this->employee->get_logged_in_employee_info();
+        $employeeName = $employeeInfo->first_name . ' ' . mb_substr($employeeInfo->last_name, 0, 1);
+
+        $data = [
+            'sale_id_num'             => NEW_ENTRY,
+            'sale_id'                 => '',
+            'invoice_number'          => '',
+            'transaction_time'        => to_datetime(time()),
+            'transaction_date'        => to_date(time()),
+            'cart'                    => $this->sale_lib->sort_and_filter_cart($cart),
+            'taxes'                   => $taxes,
+            'discount'                => $this->sale_lib->get_discount(),
+            'prediscount_subtotal'    => $totals['prediscount_subtotal'],
+            'subtotal'                => $totals['subtotal'],
+            'total'                   => $totals['total'],
+            'payments'                => $this->sale_lib->getPayments(),
+            'payments_total'          => $totals['payment_total'],
+            'amount_due'              => $totals['amount_due'],
+            'amount_change'           => -1 * (float) $totals['amount_due'],
+            'employee'                => $employeeName,
+            'comments'                => $this->sale_lib->get_comment(),
+            'barcode'                 => null,
+            'company_info'            => implode("\n", [$this->config['address'], $this->config['phone']]),
+            'include_hsn'             => (bool) $this->config['include_hsn'],
+            'show_stock_locations'    => $this->stock_location->show_locations('sales'),
+            'invoice_number_enabled'  => false,
+            'cur_giftcard_value'      => $this->sale_lib->get_giftcard_remainder(),
+            'cur_rewards_value'       => $this->sale_lib->get_rewards_remainder(),
+            'price_work_orders'       => $this->sale_lib->is_price_work_orders(),
+            'print_price_info'        => true,
+            'service_charge'          => 0,
+            'config'                  => $this->config,
+        ];
+
+        $this->_load_customer_data($this->sale_lib->get_customer(), $data);
+
+        return $data;
     }
 
     /**
@@ -1206,6 +1308,15 @@ class Sales extends Secure_Controller
         $data['cash_rounding'] = $cash_rounding;
 
         $data['cart'] = $this->sale_lib->get_cart();
+        $quickItemsPerPage = 12;
+        $quickTotalItems = $this->item->get_total_rows();
+        $quickTotalPages = self::calculateQuickProductTotalPages($quickTotalItems, $quickItemsPerPage);
+        $quickCurrentPage = max(1, min((int) $this->request->getGet('quick_page', FILTER_SANITIZE_NUMBER_INT), $quickTotalPages));
+        $quickOffset = ($quickCurrentPage - 1) * $quickItemsPerPage;
+
+        $data['quick_items'] = $this->item->get_all(NEW_ENTRY, $quickItemsPerPage, $quickOffset)->getResult();
+        $data['quick_current_page'] = $quickCurrentPage;
+        $data['quick_total_pages'] = $quickTotalPages;
         $customer_info = $this->_load_customer_data($this->sale_lib->get_customer(), $data, true);
 
         $data['modes'] = $this->sale_lib->get_register_mode_options();
@@ -1302,6 +1413,15 @@ class Sales extends Secure_Controller
         }
 
         return view("sales/register", $data);
+    }
+
+    public static function calculateQuickProductTotalPages(int $totalItems, int $itemsPerPage = 12): int
+    {
+        if ($itemsPerPage <= 0 || $totalItems <= 0) {
+            return 1;
+        }
+
+        return (int) ceil($totalItems / $itemsPerPage);
     }
 
     /**

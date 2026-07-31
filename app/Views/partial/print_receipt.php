@@ -2,12 +2,24 @@
 /**
  * @var string $selected_printer
  * @var bool $print_after_sale
+ * @var bool $auto_print
+ * @var bool $use_browser_print
+ * @var bool $auto_return_after_print
  * @var array $config
  */
+
+$auto_print = $auto_print ?? $print_after_sale;
+$use_browser_print = $use_browser_print ?? false;
+$auto_return_after_print = $auto_return_after_print ?? $print_after_sale;
 ?>
 
 <script type="text/javascript">
     function printdoc() {
+        <?php if ($use_browser_print) { ?>
+            window.print();
+            return;
+        <?php } ?>
+
         // Install Firefox addon in order to use this plugin
         if (window.jsPrintSetup) {
             // Set top margins in millimeters
@@ -55,15 +67,21 @@
         }
     }
 
-    <?php if ($print_after_sale) { ?>
+    <?php if ($auto_print) { ?>
         $(window).on('load', (function() {
+            if (window.frameElement !== null) {
+                return;
+            }
+
             // Executes when complete page is fully loaded, including all frames, objects and images
             printdoc();
 
+            <?php if ($auto_return_after_print) { ?>
             // After a delay, return to sales view
             setTimeout(function() {
                 window.location.href = "<?= site_url('sales') ?>";
             }, <?= $config['print_delay_autoreturn'] * 1000 ?>);
+            <?php } ?>
         }));
 
     <?php } ?>

@@ -1289,11 +1289,16 @@ class Sale_lib
 
     /**
      * @param int $line
-     * @return void
+     * @return bool
      */
-    public function delete_item(int $line): void
+    public function delete_item(int $line): bool
     {
         $items = $this->get_cart();
+
+        if (!isset($items[$line])) {
+            return false;
+        }
+
         $item_type = $items[$line]['item_type'];
 
         if ($item_type == ITEM_TEMP) {
@@ -1303,6 +1308,8 @@ class Sale_lib
 
         unset($items[$line]);
         $this->set_cart($items);
+
+        return true;
     }
 
     /**
