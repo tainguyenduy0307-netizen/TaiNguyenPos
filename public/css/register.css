@@ -120,7 +120,14 @@ body.sales-register-screen .pos-order-tab {
 }
 
 body.sales-register-screen .pos-order-tab.active {
-    background: #fff;
+    border-top: 3px solid #ffc107;
+    background: #f8fbff;
+    color: #044a73;
+}
+
+body.sales-register-screen .pos-order-tab:not(.active) {
+    background: #dcecf7;
+    color: #273746;
 }
 
 body.sales-register-screen .pos-order-tab strong {
@@ -141,6 +148,10 @@ body.sales-register-screen .pos-order-tab span {
     height: 18px;
     color: #057fc4;
     font-weight: 800;
+}
+
+body.sales-register-screen .pos-order-tab:not(.active) span {
+    color: #546a78;
 }
 
 body.sales-register-screen .pos-order-tab small {

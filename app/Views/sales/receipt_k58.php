@@ -31,12 +31,27 @@ $formatTendered = static function ($amount): string {
 
 $receiptNumber = !empty($invoice_number) ? $invoice_number : '';
 $serviceCharge = (float) ($service_charge ?? 0);
-$amountInWords = '';
+$amountTendered = 0.0;
 
-foreach (['to_currency_text', 'to_vietnamese_words', 'amount_to_words'] as $amountInWordsHelper) {
-    if (function_exists($amountInWordsHelper)) {
-        $amountInWords = (string) $amountInWordsHelper($total);
-        break;
+$footerBlocks = array_values(array_filter([
+    [
+        'text'  => trim((string) ($config['receipt_opening_hours'] ?? '')),
+        'class' => '',
+    ],
+    [
+        'text'  => trim((string) ($config['receipt_exchange_policy'] ?? ($config['return_policy'] ?? ''))),
+        'class' => '',
+    ],
+    [
+        'text'  => trim((string) ($config['receipt_thank_you'] ?? ($config['receipt_footer'] ?? ($config['payment_message'] ?? '')))),
+        'class' => 'k58-footer-thanks',
+    ],
+], static fn (array $footerBlock): bool => $footerBlock['text'] !== ''));
+
+foreach ($payments as $payment) {
+    $paymentAmount = (float) ($payment['payment_amount'] ?? 0);
+    if ($paymentAmount > 0 && empty($payment['cash_adjustment'])) {
+        $amountTendered += $paymentAmount;
     }
 }
 ?>
@@ -91,11 +106,6 @@ foreach (['to_currency_text', 'to_vietnamese_words', 'amount_to_words'] as $amou
                     <span><?= esc($customer_phone_number) ?></span>
                 </div>
             <?php } ?>
-
-            <div class="k58-line k58-points">
-                <span>Điểm:</span>
-                <span><?= esc((string) ((int) ($customer_points ?? 0))) ?></span>
-            </div>
         <?php } ?>
     </div>
 
@@ -151,7 +161,7 @@ foreach (['to_currency_text', 'to_vietnamese_words', 'amount_to_words'] as $amou
     <div class="k58-separator"></div>
 
     <div class="k58-totals">
-        <?php if ($config['receipt_show_total_discount'] && $discount > 0) { ?>
+        <?php if ($discount > 0) { ?>
             <div class="k58-line">
                 <span>Cộng tiền hàng</span>
                 <span><?= to_currency((string) $prediscount_subtotal) ?></span>
@@ -185,7 +195,7 @@ foreach (['to_currency_text', 'to_vietnamese_words', 'amount_to_words'] as $amou
                     continue;
                 } ?>
                 <div class="k58-line">
-                    <span><?= (float) $tax['tax_rate'] ?>% <?= esc($tax['tax_group']) ?></span>
+                    <span>Thuế/VAT <?= (float) $tax['tax_rate'] ?>% <?= esc($tax['tax_group']) ?></span>
                     <span><?= to_currency_tax((string) $tax['sale_tax_amount']) ?></span>
                 </div>
             <?php } ?>
@@ -200,10 +210,10 @@ foreach (['to_currency_text', 'to_vietnamese_words', 'amount_to_words'] as $amou
     <div class="k58-separator"></div>
 
     <div class="k58-payments">
-        <?php foreach ($payments as $payment) { ?>
+        <?php if ($amountTendered > 0) { ?>
             <div class="k58-line">
                 <span>Tiền khách đưa</span>
-                <span><?= $formatTendered($payment['payment_amount']) ?></span>
+                <span><?= $formatTendered($amountTendered) ?></span>
             </div>
         <?php } ?>
 
@@ -211,16 +221,15 @@ foreach (['to_currency_text', 'to_vietnamese_words', 'amount_to_words'] as $amou
             <span><?= $amount_change >= 0 ? 'Tiền thừa' : 'Còn thiếu' ?></span>
             <span><?= $formatTendered($amount_change) ?></span>
         </div>
-
-        <div class="k58-amount-words">Bằng chữ: <?= esc($amountInWords) ?></div>
     </div>
 
-    <div class="k58-separator"></div>
+    <?php if ($footerBlocks !== []) { ?>
+        <div class="k58-separator"></div>
 
-    <div class="k58-footer">
-        <?php if (!empty($config['payment_message'])) { ?>
-            <div><?= nl2br(esc($config['payment_message'])) ?></div>
-        <?php } ?>
-        <div>Cảm ơn quý khách</div>
-    </div>
+        <div class="k58-footer">
+            <?php foreach ($footerBlocks as $footerBlock) { ?>
+                <div class="<?= esc($footerBlock['class'], 'attr') ?>"><?= nl2br(esc($footerBlock['text'])) ?></div>
+            <?php } ?>
+        </div>
+    <?php } ?>
 </div>

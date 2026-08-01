@@ -40,6 +40,9 @@
  * @var float $non_cash_total
  * @var float $cash_amount_due
  * @var array $config
+ * @var array $cashier_order_tabs
+ * @var string $cashier_active_order_id
+ * @var array $cashier_active_order
  */
 
 use App\Models\Employee;
@@ -73,6 +76,7 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
     : (array_key_exists(lang('Sales.cash'), $register_payment_options)
         ? lang('Sales.cash')
         : (array_key_first($register_payment_options) ?: $selected_payment_type));
+$active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null;
 ?>
 
 <div id="register_wrapper">
@@ -136,13 +140,26 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
                 <?= form_input(['name' => 'item', 'id' => 'item', 'class' => 'form-control input-sm pos-search-input', 'tabindex' => ++$tabindex, 'placeholder' => 'Tìm kiếm mặt hàng - F1']) ?>
                 <span class="ui-helper-hidden-accessible" role="status"></span>
                 <div class="pos-order-tabs" role="tablist">
-                    <button type="button" class="pos-order-tab active" id="pos_close_order_button">
-                        <strong><?= isset($customer) ? esc($customer) : 'Khách lẻ' ?></strong>
-                        <small>Đơn hàng 1</small>
-                        <span aria-hidden="true">x</span>
-                    </button>
+                    <?php foreach ($cashier_order_tabs as $cashier_order_tab) { ?>
+                        <button
+                            type="button"
+                            class="pos-order-tab<?= $cashier_order_tab['active'] ? ' active' : '' ?>"
+                            data-order-id="<?= esc($cashier_order_tab['id']) ?>"
+                            data-has-open-data="<?= $cashier_order_tab['has_open_data'] ? '1' : '0' ?>"
+                            aria-selected="<?= $cashier_order_tab['active'] ? 'true' : 'false' ?>">
+                            <strong><?= esc($cashier_order_tab['label']) ?></strong>
+                            <small><?= esc($cashier_order_tab['subtitle']) ?></small>
+                            <span class="pos-order-close" aria-hidden="true">x</span>
+                        </button>
+                    <?php } ?>
                 </div>
-                <button type="button" class="btn pos-add-tab" disabled title="Multi-order cần task riêng"><span class="glyphicon glyphicon-plus-sign"></span></button>
+                <button
+                    type="button"
+                    class="btn pos-add-tab"
+                    id="pos_add_order_button"
+                    title="Thêm đơn hàng">
+                    <span class="glyphicon glyphicon-plus-sign"></span>
+                </button>
                 <button id="new_item_button" class="btn btn-default btn-sm modal-dlg pos-hidden-register-control" data-btn-new="<?= lang('Common.new') ?>" data-btn-submit="<?= lang('Common.submit') ?>" data-href="<?= "items/view" ?>" title="<?= lang(ucfirst($controller_name) . ".new_item") ?>">
                     <span class="glyphicon glyphicon-tag"></span>
                 </button>
@@ -506,8 +523,8 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
                             <tr>
                                 <td><span id="amount_tendered_label">Tiền khách đưa</span></td>
                                 <td>
-                                    <?= form_input(['name' => 'amount_tendered', 'id' => 'amount_tendered', 'class' => 'form-control input-sm non-giftcard-input', 'value' => to_currency_no_money($amount_due), 'size' => '5', 'tabindex' => ++$tabindex, 'onClick' => 'this.select();']) ?>
-                                    <?= form_input(['name' => 'amount_tendered', 'id' => 'amount_tendered', 'class' => 'form-control input-sm giftcard-input', 'disabled' => true, 'value' => to_currency_no_money($amount_due), 'size' => '5', 'tabindex' => ++$tabindex]) ?>
+                                    <?= form_input(['name' => 'amount_tendered', 'id' => 'amount_tendered', 'class' => 'form-control input-sm non-giftcard-input', 'value' => $active_order_amount_tendered ?? to_currency_no_money($amount_due), 'size' => '5', 'tabindex' => ++$tabindex, 'onClick' => 'this.select();']) ?>
+                                    <?= form_input(['name' => 'amount_tendered', 'id' => 'amount_tendered', 'class' => 'form-control input-sm giftcard-input', 'disabled' => true, 'value' => $active_order_amount_tendered ?? to_currency_no_money($amount_due), 'size' => '5', 'tabindex' => ++$tabindex]) ?>
                                 </td>
                             </tr>
                             <tr class="pos-quick-cash-row">
@@ -667,8 +684,10 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
     const referenceCodePaymentTypes = <?= json_encode($reference_code_payment_types) ?>;
     const registerAmountDue = <?= json_encode((float) $amount_due) ?>;
     const registerHasCartItems = <?= json_encode(count($cart) > 0) ?>;
-    const registerHasOpenData = <?= json_encode(count($cart) > 0 || count($payments) > 0) ?>;
+    const cashierActiveOrderId = <?= json_encode($cashier_active_order_id) ?>;
+    const registerInitialTenderedAmount = <?= json_encode($active_order_amount_tendered) ?>;
     let registerCompletionInProgress = false;
+    let saveTenderedTimer = null;
     const shortcutCodes = {
         items: keyboardShortcuts?.items?.code ?? null,
         customers: keyboardShortcuts?.customers?.code ?? null,
@@ -901,14 +920,21 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
             }
         });
 
-        $('#pos_close_order_button').click(function(event) {
-            if ($(event.target).closest('span').length === 0) {
+        $('#pos_add_order_button').click(function() {
+            postCashierOrder("<?= site_url('sales/orders/new') ?>");
+        });
+
+        $('.pos-order-tab').click(function(event) {
+            const $tab = $(this);
+            const orderId = $tab.data('order-id');
+
+            if ($(event.target).closest('.pos-order-close').length > 0) {
+                closeCashierOrder($tab, orderId);
                 return;
             }
 
-            if (!registerHasOpenData || confirm("<?= lang(ucfirst($controller_name) . '.confirm_cancel_sale') ?>")) {
-                $('#buttons_form').attr('action', "<?= site_url("$controller_name/cancel") ?>");
-                $('#buttons_form').submit();
+            if (orderId && orderId !== cashierActiveOrderId) {
+                postCashierOrder("<?= site_url('sales/orders/switch') ?>/" + encodeURIComponent(orderId));
             }
         });
 
@@ -947,7 +973,10 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
             updateRegisterChange();
         });
 
-        $('[name="amount_tendered"]').on('input', updateRegisterChange);
+        $('[name="amount_tendered"]').on('input', function() {
+            updateRegisterChange();
+            queueSaveTenderedAmount();
+        });
         updateRegisterChange();
 
         $('#add_payment_form').submit(function() {
@@ -1028,6 +1057,58 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
         });
     });
 
+    function getActiveTenderedAmountValue() {
+        return $('[name="amount_tendered"]:enabled').val() || '';
+    }
+
+    function postCashierOrder(url) {
+        $.ajax({
+            url: url,
+            type: 'post',
+            data: {
+                amount_tendered: getActiveTenderedAmountValue()
+            },
+            dataType: 'json',
+            success: function(response) {
+                if (response && response.success) {
+                    window.location.href = "<?= site_url('sales') ?>";
+                    return;
+                }
+
+                showRegisterPrintError(response && response.message ? response.message : 'Không thể đổi đơn hàng.');
+            },
+            error: function() {
+                showRegisterPrintError('Không thể đổi đơn hàng.');
+            }
+        });
+    }
+
+    function closeCashierOrder($tab, orderId) {
+        const hasOpenData = $tab.data('has-open-data') == '1';
+
+        if (hasOpenData && !confirm("<?= lang(ucfirst($controller_name) . '.confirm_cancel_sale') ?>")) {
+            return;
+        }
+
+        postCashierOrder("<?= site_url('sales/orders/close') ?>/" + encodeURIComponent(orderId));
+    }
+
+    function queueSaveTenderedAmount() {
+        if (saveTenderedTimer) {
+            clearTimeout(saveTenderedTimer);
+        }
+
+        saveTenderedTimer = setTimeout(function() {
+            $.ajax({
+                url: "<?= site_url('sales/orders/amount-tendered') ?>",
+                type: 'post',
+                data: {
+                    amount_tendered: getActiveTenderedAmountValue()
+                }
+            });
+        }, 250);
+    }
+
     function getCartItemId($input) {
         const formId = $input.attr('form') || $input.closest('.cashier-cart-row').data('cart-form');
 
@@ -1089,7 +1170,7 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
             $("#sale_total").html("<?= to_currency($non_cash_total) ?>");
             $("#sale_amount_due").html("<?= to_currency($cash_amount_due) ?>");
             $("#amount_tendered_label").html("Tiền khách đưa");
-            $('[name="amount_tendered"]:enabled').val("<?= to_currency_no_money($cash_amount_due) ?>");
+            $('[name="amount_tendered"]:enabled').val(registerInitialTenderedAmount ?? "<?= to_currency_no_money($cash_amount_due) ?>");
             $(".giftcard-input").attr('disabled', true);
             $(".non-giftcard-input").attr('disabled', false);
             $(".reference-code-input").hide();
@@ -1097,7 +1178,7 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
             $("#sale_total").html("<?= to_currency($non_cash_total) ?>");
             $("#sale_amount_due").html("<?= to_currency($amount_due) ?>");
             $("#amount_tendered_label").html("Tiền khách đưa");
-            $('[name="amount_tendered"]:enabled').val("<?= to_currency_no_money($amount_due) ?>");
+            $('[name="amount_tendered"]:enabled').val(registerInitialTenderedAmount ?? "<?= to_currency_no_money($amount_due) ?>");
             $(".giftcard-input").attr('disabled', true);
             $(".non-giftcard-input").attr('disabled', false);
             if (needsReferenceCode) {
@@ -1227,12 +1308,14 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
 
         $.ajax({
             url: action,
-            method: 'post',
+            type: 'post',
             data: $form.serialize(),
             dataType: 'json',
             success: function(response) {
-                if (response && response.success && response.receipt_url) {
-                    printReceiptInFrame(response.receipt_url)
+                const receiptUrl = getValidReceiptUrl(response);
+
+                if (receiptUrl) {
+                    printReceiptInFrame(receiptUrl)
                         .then(function() {
                             window.location.href = "<?= site_url('sales') ?>";
                         })
@@ -1254,6 +1337,32 @@ $register_selected_payment_type = in_array($selected_payment_type, array_keys($r
                 showRegisterPrintError('Không thể hoàn tất thanh toán.');
             }
         });
+    }
+
+    function getValidReceiptUrl(response) {
+        if (!response || response.success !== true) {
+            return null;
+        }
+
+        const saleId = Number(response.sale_id);
+        const receiptUrl = typeof response.receipt_url === 'string' ? response.receipt_url.trim() : '';
+
+        if (!Number.isInteger(saleId) || saleId <= 0 || receiptUrl === '' || receiptUrl.indexOf('/sales/receipt/') === -1) {
+            return null;
+        }
+
+        try {
+            const parsedUrl = new URL(receiptUrl, window.location.origin);
+            const matches = parsedUrl.pathname.match(/\/sales\/receipt\/(\d+)$/);
+
+            if (!matches || Number(matches[1]) !== saleId) {
+                return null;
+            }
+        } catch (error) {
+            return null;
+        }
+
+        return receiptUrl;
     }
 
     function parseLocaleMoney(value) {

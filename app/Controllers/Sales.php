@@ -68,7 +68,68 @@ class Sales extends Secure_Controller
     {
         $this->requireCurrentBusinessUnitId();
         $this->session->set('allow_temp_items', 1);
-        return $this->reload();
+        return $this->reload([], false);
+    }
+
+    public function postNewOrder(): ResponseInterface
+    {
+        $this->requireCurrentBusinessUnitId();
+        $orderId = $this->sale_lib->createCashierOrder($this->getPostedAmountTendered());
+
+        if ($orderId === null) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Chỉ được mở tối đa 5 đơn hàng cùng lúc.',
+            ]);
+        }
+
+        return $this->response->setJSON([
+            'success'         => true,
+            'active_order_id' => $orderId,
+        ]);
+    }
+
+    public function postSwitchOrder(string $orderId): ResponseInterface
+    {
+        $this->requireCurrentBusinessUnitId();
+        $this->sale_lib->saveActiveCashierOrder($this->getPostedAmountTendered());
+
+        if (!$this->sale_lib->restoreCashierOrder($orderId)) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => lang('Sales.not_authorized'),
+            ]);
+        }
+
+        return $this->response->setJSON([
+            'success'         => true,
+            'active_order_id' => $orderId,
+        ]);
+    }
+
+    public function postCloseOrder(string $orderId): ResponseInterface
+    {
+        $this->requireCurrentBusinessUnitId();
+
+        if (!$this->sale_lib->closeCashierOrder($orderId, $this->getPostedAmountTendered())) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => lang('Sales.not_authorized'),
+            ]);
+        }
+
+        return $this->response->setJSON([
+            'success'         => true,
+            'active_order_id' => $this->sale_lib->getActiveCashierOrderId(),
+        ]);
+    }
+
+    public function postOrderAmountTendered(): ResponseInterface
+    {
+        $this->requireCurrentBusinessUnitId();
+        $this->sale_lib->saveActiveCashierOrder($this->getPostedAmountTendered());
+
+        return $this->response->setJSON(['success' => true]);
     }
 
     /**
@@ -858,7 +919,7 @@ class Sales extends Secure_Controller
             }
 
             $data['barcode'] = $this->barcode_lib->generate_receipt_barcode($data['sale_id']);
-            $this->sale_lib->clear_all();
+            $this->sale_lib->completeActiveCashierOrder();
             return view('sales/' . $invoice_view, $data);
         } elseif ($this->sale_lib->is_work_order_mode()) {
 
@@ -890,7 +951,7 @@ class Sales extends Secure_Controller
 
                 $data['barcode'] = null;
 
-                $this->sale_lib->clear_all();
+                $this->sale_lib->completeActiveCashierOrder();
                 return view('sales/work_order', $data);
             }
         } elseif ($this->sale_lib->is_quote_mode()) {
@@ -917,7 +978,7 @@ class Sales extends Secure_Controller
                 $data['cart'] = $this->sale_lib->sort_and_filter_cart($data['cart']);
                 $data['barcode'] = null;
 
-                $this->sale_lib->clear_all();
+                $this->sale_lib->completeActiveCashierOrder();
                 return view('sales/quote', $data);
             }
         } else {
@@ -956,7 +1017,7 @@ class Sales extends Secure_Controller
                 }
                 $data['receipt_template_view'] = $receipt_template;
 
-                $this->sale_lib->clear_all();
+                $this->sale_lib->completeActiveCashierOrder();
 
                 if ($this->request->isAJAX()) {
                     return $this->response->setJSON([
@@ -1294,8 +1355,14 @@ class Sales extends Secure_Controller
      * @param array $data
      * @return void
      */
-    private function reload(array $data = []): ResponseInterface|string
+    private function reload(array $data = [], bool $saveActiveOrder = true): ResponseInterface|string
     {
+        $this->sale_lib->ensureCashierOrders();
+        if ($saveActiveOrder) {
+            $this->sale_lib->saveActiveCashierOrder();
+        }
+        $this->sale_lib->restoreActiveCashierOrder();
+
         $sale_id = $this->session->get('sale_id');    // TODO: This variable is never used
 
         if ($sale_id == '') {
@@ -1393,6 +1460,10 @@ class Sales extends Secure_Controller
         $data['quote_number'] = $this->sale_lib->get_quote_number();
         $data['work_order_number'] = $this->sale_lib->get_work_order_number();
         $data['keyboardShortcuts'] = $this->sale_lib->getKeyShortcuts();
+        $this->sale_lib->saveActiveCashierOrder();
+        $data['cashier_order_tabs'] = $this->buildCashierOrderTabs();
+        $data['cashier_active_order_id'] = $this->sale_lib->getActiveCashierOrderId();
+        $data['cashier_active_order'] = $this->sale_lib->getCashierOrders()[$data['cashier_active_order_id']];
 
         // TODO: the if/else set below should be converted to a switch
         if ($this->sale_lib->get_mode() == 'sale_invoice') {    // TODO: Duplicated code.
@@ -1716,7 +1787,6 @@ class Sales extends Secure_Controller
         $sale_id = $this->sale_lib->get_sale_id();
         if ($sale_id != NEW_ENTRY && $sale_id != '') {
             if (!$this->sale->is_owned_by_current_business_unit((int) $sale_id)) {
-                $this->sale_lib->clear_all();
                 return $this->reload(['error' => lang('Sales.not_authorized')]);
             }
 
@@ -1737,7 +1807,7 @@ class Sales extends Secure_Controller
             $this->sale_lib->remove_temp_items();
         }
 
-        $this->sale_lib->clear_all();
+        $this->sale_lib->completeActiveCashierOrder();
         return $this->reload();
     }
 
@@ -1798,9 +1868,8 @@ class Sales extends Secure_Controller
             $data['error'] = lang('Sales.unsuccessfully_suspended_sale');
         } else {
             $data['success'] = lang('Sales.successfully_suspended_sale');
+            $this->sale_lib->completeActiveCashierOrder();
         }
-
-        $this->sale_lib->clear_all();
 
         return $this->reload($data);
     }
@@ -1877,6 +1946,61 @@ class Sales extends Secure_Controller
     private function requireCurrentBusinessUnitId(): int
     {
         return Services::businessUnit()->requireCurrentBusinessUnitId();
+    }
+
+    private function getPostedAmountTendered(): ?string
+    {
+        $amountTendered = $this->request->getPost('amount_tendered');
+
+        if ($amountTendered === null) {
+            return null;
+        }
+
+        $amountTendered = trim((string) $amountTendered);
+
+        return $amountTendered === '' ? null : $amountTendered;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildCashierOrderTabs(): array
+    {
+        $tabs = [];
+        $orders = $this->sale_lib->getCashierOrders();
+        $activeOrderId = $this->sale_lib->getActiveCashierOrderId();
+
+        foreach ($orders as $orderId => $state) {
+            $customerId = (int) ($state['customer_id'] ?? NEW_ENTRY);
+            $orderNumber = (int) str_replace('order_', '', $orderId);
+            $tabs[] = [
+                'id'            => $orderId,
+                'label'         => $this->getCashierOrderCustomerLabel($customerId),
+                'subtitle'      => 'Đơn hàng ' . $orderNumber,
+                'active'        => $orderId === $activeOrderId,
+                'has_open_data' => $this->sale_lib->cashierOrderHasOpenData($state),
+            ];
+        }
+
+        return $tabs;
+    }
+
+    private function getCashierOrderCustomerLabel(int $customerId): string
+    {
+        if ($customerId === NEW_ENTRY) {
+            return 'Khách lẻ';
+        }
+
+        $customerInfo = $this->customer->get_info($customerId);
+        if (empty($customerInfo)) {
+            return 'Khách lẻ';
+        }
+
+        if (!empty($customerInfo->company_name)) {
+            return $customerInfo->company_name;
+        }
+
+        return trim($customerInfo->first_name . ' ' . $customerInfo->last_name) ?: 'Khách lẻ';
     }
 
     /**

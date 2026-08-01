@@ -24,6 +24,11 @@ use ReflectionException;
  */
 class Sale_lib
 {
+    private const CASHIER_ORDERS_SESSION_KEY = 'cashier_orders';
+    private const CASHIER_ACTIVE_ORDER_SESSION_KEY = 'cashier_active_order_id';
+    private const CASHIER_NEXT_ORDER_NUMBER_SESSION_KEY = 'cashier_next_order_number';
+    public const CASHIER_MAX_OPEN_ORDERS = 5;
+
     private const KEY_SHORTCUT_DEFAULTS = [
         'cancel'    => ['value' => '27 | ESC', 'code' => 27, 'label' => 'ESC'],
         'items'     => ['value' => '49 | ALT + 1', 'code' => 49, 'label' => 'ALT + 1'],
@@ -100,6 +105,310 @@ class Sale_lib
         $register_modes['return'] = lang('Sales.return');
 
         return $register_modes;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    public function getCashierOrders(): array
+    {
+        $this->ensureCashierOrders();
+
+        return $this->session->get(self::CASHIER_ORDERS_SESSION_KEY);
+    }
+
+    public function getActiveCashierOrderId(): string
+    {
+        $this->ensureCashierOrders();
+
+        return $this->session->get(self::CASHIER_ACTIVE_ORDER_SESSION_KEY);
+    }
+
+    public function ensureCashierOrders(): void
+    {
+        $orders = $this->session->get(self::CASHIER_ORDERS_SESSION_KEY);
+
+        if (!is_array($orders) || $orders === []) {
+            $this->session->set(self::CASHIER_ORDERS_SESSION_KEY, [
+                'order_1' => $this->newCashierOrderState(),
+            ]);
+            $this->session->set(self::CASHIER_ACTIVE_ORDER_SESSION_KEY, 'order_1');
+            $this->session->set(self::CASHIER_NEXT_ORDER_NUMBER_SESSION_KEY, 2);
+
+            return;
+        }
+
+        $activeOrderId = $this->session->get(self::CASHIER_ACTIVE_ORDER_SESSION_KEY);
+        if (!is_string($activeOrderId) || !array_key_exists($activeOrderId, $orders)) {
+            $this->session->set(self::CASHIER_ACTIVE_ORDER_SESSION_KEY, array_key_first($orders));
+        }
+
+        if (!$this->session->get(self::CASHIER_NEXT_ORDER_NUMBER_SESSION_KEY)) {
+            $nextOrderNumber = 1;
+            foreach (array_keys($orders) as $orderId) {
+                if (preg_match('/^order_(\d+)$/', $orderId, $matches)) {
+                    $nextOrderNumber = max($nextOrderNumber, (int) $matches[1] + 1);
+                }
+            }
+            $this->session->set(self::CASHIER_NEXT_ORDER_NUMBER_SESSION_KEY, $nextOrderNumber);
+        }
+    }
+
+    public function saveActiveCashierOrder(?string $amountTendered = null): void
+    {
+        $this->ensureCashierOrders();
+
+        $orders = $this->getCashierOrders();
+        $activeOrderId = $this->getActiveCashierOrderId();
+        $previousState = $orders[$activeOrderId] ?? [];
+        $orders[$activeOrderId] = $this->snapshotCashierOrderState($previousState, $amountTendered);
+
+        $this->session->set(self::CASHIER_ORDERS_SESSION_KEY, $orders);
+    }
+
+    public function restoreActiveCashierOrder(): void
+    {
+        $this->restoreCashierOrder($this->getActiveCashierOrderId());
+    }
+
+    public function restoreCashierOrder(string $orderId): bool
+    {
+        $this->ensureCashierOrders();
+
+        if (!$this->isValidCashierOrderId($orderId)) {
+            return false;
+        }
+
+        $orders = $this->getCashierOrders();
+        if (!array_key_exists($orderId, $orders)) {
+            return false;
+        }
+
+        $this->restoreCashierOrderState($orders[$orderId]);
+        $this->session->set(self::CASHIER_ACTIVE_ORDER_SESSION_KEY, $orderId);
+
+        return true;
+    }
+
+    public function createCashierOrder(?string $amountTendered = null): ?string
+    {
+        $this->ensureCashierOrders();
+        $this->saveActiveCashierOrder($amountTendered);
+
+        $orders = $this->getCashierOrders();
+        if (count($orders) >= self::CASHIER_MAX_OPEN_ORDERS) {
+            return null;
+        }
+
+        $nextOrderNumber = (int) $this->session->get(self::CASHIER_NEXT_ORDER_NUMBER_SESSION_KEY);
+        do {
+            $orderId = 'order_' . $nextOrderNumber;
+            $nextOrderNumber++;
+        } while (array_key_exists($orderId, $orders));
+
+        $orders[$orderId] = $this->newCashierOrderState();
+        $this->session->set(self::CASHIER_ORDERS_SESSION_KEY, $orders);
+        $this->session->set(self::CASHIER_ACTIVE_ORDER_SESSION_KEY, $orderId);
+        $this->session->set(self::CASHIER_NEXT_ORDER_NUMBER_SESSION_KEY, $nextOrderNumber);
+        $this->restoreCashierOrderState($orders[$orderId]);
+
+        return $orderId;
+    }
+
+    public function closeCashierOrder(string $orderId, ?string $amountTendered = null): bool
+    {
+        $this->ensureCashierOrders();
+
+        if (!$this->isValidCashierOrderId($orderId)) {
+            return false;
+        }
+
+        $orders = $this->getCashierOrders();
+        if (!array_key_exists($orderId, $orders)) {
+            return false;
+        }
+
+        $activeOrderId = $this->getActiveCashierOrderId();
+        if ($orderId !== $activeOrderId) {
+            $this->saveActiveCashierOrder($amountTendered);
+            $orders = $this->getCashierOrders();
+        }
+
+        $orderIds = array_keys($orders);
+        $closedIndex = array_search($orderId, $orderIds, true);
+        unset($orders[$orderId]);
+
+        if ($orders === []) {
+            $orders = ['order_1' => $this->newCashierOrderState()];
+            $this->session->set(self::CASHIER_NEXT_ORDER_NUMBER_SESSION_KEY, 2);
+            $nextActiveOrderId = 'order_1';
+        } elseif ($orderId === $activeOrderId) {
+            $remainingOrderIds = array_keys($orders);
+            $nextActiveOrderId = $remainingOrderIds[$closedIndex] ?? $remainingOrderIds[max(0, $closedIndex - 1)];
+        } else {
+            $nextActiveOrderId = $activeOrderId;
+        }
+
+        $this->session->set(self::CASHIER_ORDERS_SESSION_KEY, $orders);
+        $this->session->set(self::CASHIER_ACTIVE_ORDER_SESSION_KEY, $nextActiveOrderId);
+        $this->restoreCashierOrderState($orders[$nextActiveOrderId]);
+
+        return true;
+    }
+
+    public function completeActiveCashierOrder(): void
+    {
+        $this->closeCashierOrder($this->getActiveCashierOrderId());
+    }
+
+    /**
+     * @param array<string, mixed> $state
+     */
+    public function cashierOrderHasOpenData(array $state): bool
+    {
+        return !empty($state['cart'])
+            || ((int) ($state['customer_id'] ?? NEW_ENTRY) !== NEW_ENTRY)
+            || !empty($state['payments'])
+            || trim((string) ($state['comment'] ?? '')) !== '';
+    }
+
+    public function isValidCashierOrderId(string $orderId): bool
+    {
+        return preg_match('/^order_[1-9][0-9]*$/', $orderId) === 1;
+    }
+
+    /**
+     * @param array<string, mixed> $previousState
+     * @return array<string, mixed>
+     */
+    private function snapshotCashierOrderState(array $previousState = [], ?string $amountTendered = null): array
+    {
+        $state = [
+            'cart'                => $this->session->get('sales_cart') ?? [],
+            'customer_id'         => $this->session->get('sales_customer') ?? NEW_ENTRY,
+            'payments'            => $this->session->get('sales_payments') ?? [],
+            'comment'             => $this->session->get('sales_comment') ?? '',
+            'invoice_number'      => $this->session->get('sales_invoice_number'),
+            'quote_number'        => $this->session->get('sales_quote_number'),
+            'work_order_number'   => $this->session->get('sales_work_order_number'),
+            'sale_type'           => $this->session->get('sale_type') ?? SALE_TYPE_POS,
+            'mode'                => $this->session->get('sales_mode') ?? 'sale',
+            'dinner_table'        => $this->session->get('dinner_table'),
+            'sale_location'       => $this->session->get('sales_location'),
+            'payment_type'        => $this->session->get('payment_type'),
+            'giftcard_remainder'  => $this->session->get('sales_giftcard_remainder'),
+            'rewards_remainder'   => $this->session->get('sales_rewards_remainder'),
+            'email_receipt'       => $this->session->get('sales_email_receipt'),
+            'print_after_sale'    => $this->session->get('sales_print_after_sale'),
+            'price_work_orders'   => $this->session->get('sales_price_work_orders'),
+            'suspended_id'        => $this->session->get('suspended_id'),
+            'sale_id'             => $this->session->get('sale_id') ?? NEW_ENTRY,
+            'cash_mode'           => $this->session->get('cash_mode'),
+            'cash_rounding'       => $this->session->get('cash_rounding'),
+            'cash_adjustment'     => $this->session->get('cash_adjustment_amount'),
+            'amount_tendered'     => $previousState['amount_tendered'] ?? null,
+        ];
+
+        if ($amountTendered !== null) {
+            $state['amount_tendered'] = $amountTendered;
+        }
+
+        return $state;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function newCashierOrderState(): array
+    {
+        return [
+            'cart'                => [],
+            'customer_id'         => NEW_ENTRY,
+            'payments'            => [],
+            'comment'             => '',
+            'invoice_number'      => null,
+            'quote_number'        => null,
+            'work_order_number'   => null,
+            'sale_type'           => SALE_TYPE_POS,
+            'mode'                => 'sale',
+            'dinner_table'        => null,
+            'sale_location'       => null,
+            'payment_type'        => null,
+            'giftcard_remainder'  => null,
+            'rewards_remainder'   => null,
+            'email_receipt'       => null,
+            'print_after_sale'    => null,
+            'price_work_orders'   => null,
+            'suspended_id'        => null,
+            'sale_id'             => NEW_ENTRY,
+            'cash_mode'           => null,
+            'cash_rounding'       => null,
+            'cash_adjustment'     => null,
+            'amount_tendered'     => null,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $state
+     */
+    private function restoreCashierOrderState(array $state): void
+    {
+        foreach ([
+            'sales_cart',
+            'sales_customer',
+            'sales_payments',
+            'sales_comment',
+            'sales_invoice_number',
+            'sales_quote_number',
+            'sales_work_order_number',
+            'sale_type',
+            'sales_mode',
+            'dinner_table',
+            'sales_location',
+            'payment_type',
+            'sales_giftcard_remainder',
+            'sales_rewards_remainder',
+            'sales_email_receipt',
+            'sales_print_after_sale',
+            'sales_price_work_orders',
+            'suspended_id',
+            'sale_id',
+            'cash_mode',
+            'cash_rounding',
+            'cash_adjustment_amount',
+        ] as $sessionKey) {
+            $this->session->remove($sessionKey);
+        }
+
+        $this->session->set('sales_cart', $state['cart'] ?? []);
+        $this->session->set('sales_customer', $state['customer_id'] ?? NEW_ENTRY);
+        $this->session->set('sales_payments', $state['payments'] ?? []);
+        $this->session->set('sales_comment', $state['comment'] ?? '');
+        $this->session->set('sale_type', $state['sale_type'] ?? SALE_TYPE_POS);
+        $this->session->set('sales_mode', $state['mode'] ?? 'sale');
+        $this->session->set('sale_id', $state['sale_id'] ?? NEW_ENTRY);
+
+        foreach ([
+            'invoice_number'     => 'sales_invoice_number',
+            'quote_number'       => 'sales_quote_number',
+            'work_order_number'  => 'sales_work_order_number',
+            'dinner_table'       => 'dinner_table',
+            'sale_location'      => 'sales_location',
+            'payment_type'       => 'payment_type',
+            'giftcard_remainder' => 'sales_giftcard_remainder',
+            'rewards_remainder'  => 'sales_rewards_remainder',
+            'email_receipt'      => 'sales_email_receipt',
+            'print_after_sale'   => 'sales_print_after_sale',
+            'price_work_orders'  => 'sales_price_work_orders',
+            'suspended_id'       => 'suspended_id',
+            'cash_mode'          => 'cash_mode',
+            'cash_rounding'      => 'cash_rounding',
+            'cash_adjustment'    => 'cash_adjustment_amount',
+        ] as $stateKey => $sessionKey) {
+            if (array_key_exists($stateKey, $state) && $state[$stateKey] !== null) {
+                $this->session->set($sessionKey, $state[$stateKey]);
+            }
+        }
     }
 
     private const ALLOWED_INVOICE_TYPES = [

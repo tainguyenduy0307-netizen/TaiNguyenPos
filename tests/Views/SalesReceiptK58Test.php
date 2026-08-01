@@ -48,8 +48,11 @@ class SalesReceiptK58Test extends CIUnitTestCase
         $this->assertStringContainsString('SL', $html);
         $this->assertStringContainsString('Thành tiền', $html);
         $this->assertStringContainsString('SĐT:', $html);
-        $this->assertStringContainsString('Điểm:', $html);
-        $this->assertStringContainsString('>7<', $html);
+        $this->assertStringNotContainsString('Điểm:', $html);
+        $this->assertStringNotContainsString('Điểm hiện có', $html);
+        $this->assertStringNotContainsString('Điểm thưởng', $html);
+        $this->assertStringNotContainsString('customer_points', $html);
+        $this->assertStringNotContainsString('>7<', $html);
         $this->assertStringContainsString('Sữa tươi tiệt trùng Vinamilk loại đặc biệt rất dài', $html);
         $this->assertStringContainsString('15.000', $html);
         $this->assertStringContainsString('>2<', $html);
@@ -60,11 +63,14 @@ class SalesReceiptK58Test extends CIUnitTestCase
         $this->assertStringContainsString('Tổng cộng', $html);
         $this->assertStringContainsString('Tiền khách đưa', $html);
         $this->assertStringContainsString('Tiền thừa', $html);
-        $this->assertStringContainsString('Bằng chữ:', $html);
-        $this->assertStringContainsString('Cảm ơn quý khách', $html);
+        $this->assertStringNotContainsString('Bằng chữ:', $html);
+        $this->assertStringNotContainsString('Bằng chữ', $html);
+        $this->assertStringContainsString('Thời gian mở cửa từ 7h - 22h30!', $html);
+        $this->assertStringContainsString('Thời gian đổi hàng trong vòng 5 ngày', $html);
+        $this->assertStringContainsString('Cảm ơn quý khách và hẹn gặp lại!', $html);
         $this->assertStringContainsString('Mo ta san pham', $html);
         $this->assertStringContainsString('SN123456', $html);
-        $this->assertLessThan(strpos($html, 'Đơn giá'), strpos($html, 'Điểm:'));
+        $this->assertLessThan(strpos($html, 'Đơn giá'), strpos($html, 'SĐT:'));
         $this->assertSame(1, substr_count($html, 'INV-1001'));
         $this->assertSame(1, substr_count($html, 'Đơn giá'));
         $this->assertStringNotContainsString('POS 1001', $html);
@@ -77,7 +83,6 @@ class SalesReceiptK58Test extends CIUnitTestCase
         $this->assertStringNotContainsString('barcode', strtolower($html));
         $this->assertStringNotContainsString('comment', strtolower($html));
         $this->assertStringNotContainsString('Test', $html);
-        $this->assertStringNotContainsString('return_policy', $html);
         $this->assertStringNotContainsString('Return Policy', $html);
         $this->assertStringNotContainsString('&minus;', $html);
         $this->assertStringNotContainsString('>-', $html);
@@ -97,7 +102,8 @@ class SalesReceiptK58Test extends CIUnitTestCase
         $this->assertStringNotContainsString('Mã hóa đơn', $html);
         $this->assertStringNotContainsString('POS 1001', $html);
         $this->assertStringNotContainsString('Điểm:', $html);
-        $this->assertStringContainsString('Cảm ơn quý khách', $html);
+        $this->assertStringNotContainsString('Bằng chữ', $html);
+        $this->assertStringContainsString('Cảm ơn quý khách và hẹn gặp lại!', $html);
     }
 
     public function testReceiptK58DoesNotRenderTemporarySaleLabels(): void
@@ -136,6 +142,107 @@ class SalesReceiptK58Test extends CIUnitTestCase
         $this->assertStringContainsString('32.000', $html);
     }
 
+    public function testReceiptK58RendersTaxOnlyWhenPositive(): void
+    {
+        $html = view('sales/receipt_k58', $this->receiptData([
+            'taxes' => [
+                [
+                    'tax_rate'        => 10,
+                    'tax_group'       => 'VAT',
+                    'sale_tax_amount' => 3000,
+                ],
+                [
+                    'tax_rate'        => 0,
+                    'tax_group'       => 'ZERO',
+                    'sale_tax_amount' => 0,
+                ],
+            ],
+            'config' => array_merge($this->baseConfig(), [
+                'receipt_show_taxes' => true,
+            ]),
+        ]));
+
+        $this->assertStringContainsString('Thuế/VAT 10% VAT', $html);
+        $this->assertStringContainsString('3.000', $html);
+        $this->assertStringNotContainsString('ZERO', $html);
+    }
+
+    public function testReceiptK58UsesEmailWhenWebsiteIsEmpty(): void
+    {
+        $html = view('sales/receipt_k58', $this->receiptData([
+            'config' => array_merge($this->baseConfig(), [
+                'website' => '',
+                'email'   => 'store@example.test',
+            ]),
+        ]));
+
+        $this->assertStringContainsString('store@example.test', $html);
+        $this->assertStringNotContainsString('tainguyenpos.test', $html);
+    }
+
+    public function testReceiptK58DoesNotRenderEmptyWebsiteEmailOrFooterLines(): void
+    {
+        $html = view('sales/receipt_k58', $this->receiptData([
+            'config' => array_merge($this->baseConfig(), [
+                'website'                 => '',
+                'email'                   => '',
+                'receipt_opening_hours'   => '',
+                'receipt_exchange_policy' => '',
+                'return_policy'           => '',
+                'receipt_thank_you'       => '',
+                'receipt_footer'          => '',
+                'payment_message'         => '',
+            ]),
+        ]));
+
+        $this->assertStringNotContainsString('store@example.test', $html);
+        $this->assertStringNotContainsString('tainguyenpos.test', $html);
+        $this->assertStringNotContainsString('k58-footer', $html);
+        $this->assertStringNotContainsString('<div></div>', $html);
+    }
+
+    public function testReceiptK58SkipsNegativePaymentsAndShowsAmountDue(): void
+    {
+        $html = view('sales/receipt_k58', $this->receiptData([
+            'payments' => [
+                [
+                    'payment_type'   => 'Điều chỉnh',
+                    'payment_amount' => '-1000.00',
+                ],
+            ],
+            'amount_change' => -30000,
+        ]));
+
+        $this->assertStringNotContainsString('Tiền khách đưa', $html);
+        $this->assertStringContainsString('Còn thiếu', $html);
+        $this->assertStringContainsString('30.000', $html);
+        $this->assertStringNotContainsString('>-', $html);
+    }
+
+    public function testReceiptK58PreviewAndReceiptUseSameHeaderFooterTemplate(): void
+    {
+        $previewHtml = view('sales/receipt_k58', $this->receiptData([
+            'invoice_number' => '',
+        ]));
+        $receiptHtml = view('sales/receipt_k58', $this->receiptData());
+
+        foreach ([
+            'Cua hang Tai Nguyen',
+            '123 Nguyen Trai',
+            '028000000',
+            'HÓA ĐƠN BÁN HÀNG',
+            'Thời gian mở cửa từ 7h - 22h30!',
+            'Thời gian đổi hàng trong vòng 5 ngày',
+            'Cảm ơn quý khách và hẹn gặp lại!',
+        ] as $sharedText) {
+            $this->assertStringContainsString($sharedText, $previewHtml);
+            $this->assertStringContainsString($sharedText, $receiptHtml);
+        }
+
+        $this->assertStringNotContainsString('Mã hóa đơn', $previewHtml);
+        $this->assertStringContainsString('Mã hóa đơn', $receiptHtml);
+    }
+
     public function testReceiptK58CssContainsThermalPrintRules(): void
     {
         $css = file_get_contents(FCPATH . 'css/receipt_k58.css');
@@ -158,8 +265,10 @@ class SalesReceiptK58Test extends CIUnitTestCase
         $this->assertStringContainsString('line-height: 1.22;', $css);
         $this->assertStringContainsString('#receipt_k58_wrapper .k58-item-name', $css);
         $this->assertStringContainsString('#receipt_k58_wrapper .k58-footer', $css);
+        $this->assertStringContainsString('#receipt_k58_wrapper .k58-footer-thanks', $css);
         $this->assertStringContainsString('.print_hide', $css);
         $this->assertStringContainsString('display: none !important;', $css);
+        $this->assertStringNotContainsString('k58-amount-words', $css);
         $this->assertStringNotContainsString('left:', $css);
         $this->assertStringNotContainsString('transform:', $css);
     }
@@ -206,6 +315,11 @@ class SalesReceiptK58Test extends CIUnitTestCase
         $this->assertStringContainsString(".off('click.cashierPreviewPrint', '#cashier-preview-print')", $registerView);
         $this->assertStringContainsString(".off('click.cashierCompleteSale', '#cashier-complete-sale')", $registerView);
         $this->assertStringContainsString('function printReceiptInFrame(receiptUrl)', $registerView);
+        $this->assertStringContainsString('function getValidReceiptUrl(response)', $registerView);
+        $this->assertStringContainsString('response.success !== true', $registerView);
+        $this->assertStringContainsString("receiptUrl.indexOf('/sales/receipt/') === -1", $registerView);
+        $this->assertStringContainsString('/\\/sales\\/receipt\\/(\\d+)$/', $registerView);
+        $this->assertStringContainsString('printReceiptInFrame(receiptUrl)', $registerView);
         $this->assertStringContainsString('embedded_print=1&_cashier_print=', $registerView);
         $this->assertStringContainsString("frameWindow.addEventListener('afterprint', finish, { once: true });", $registerView);
         $this->assertStringContainsString("frameWindow.removeEventListener('afterprint', finish);", $registerView);
@@ -215,6 +329,9 @@ class SalesReceiptK58Test extends CIUnitTestCase
         $this->assertStringContainsString('previewReceipt', $registerView);
         $this->assertStringContainsString('completeSaleForCashier', $registerView);
         $this->assertStringNotContainsString("window.open('about:blank'", $registerView);
+        $this->assertStringNotContainsString('printReceiptInFrame(window.location.href)', $registerView);
+        $this->assertStringNotContainsString('printReceiptInFrame(form.action)', $registerView);
+        $this->assertStringNotContainsString('responseURL', $registerView);
         $this->assertStringNotContainsString('completeSaleInPopup', $registerView);
         $this->assertStringNotContainsString('Vui lòng cho phép cửa sổ bật lên để in hóa đơn.', $registerView);
     }
@@ -236,8 +353,16 @@ class SalesReceiptK58Test extends CIUnitTestCase
         $this->assertStringContainsString("\$data['receipt_template_view'] = 'receipt_k58';", $salesController);
         $this->assertStringContainsString("'invoice_number'          => ''", $salesController);
         $this->assertStringContainsString("'success'     => true", $salesController);
+        $this->assertStringContainsString("'sale_id'     => \$data['sale_id_num']", $salesController);
         $this->assertStringContainsString("'receipt_url' => site_url(\"sales/receipt/", $salesController);
         $this->assertStringContainsString("sale_id_num", $salesController);
+    }
+
+    public function testSalesReceiptRouteIsDefinedForCashierAjaxPrinting(): void
+    {
+        $routes = file_get_contents(APPPATH . 'Config/Routes.php');
+
+        $this->assertStringContainsString("\$routes->get('sales/receipt/(:num)', 'Sales::getReceipt/\$1');", $routes);
     }
 
     /**
@@ -300,7 +425,11 @@ class SalesReceiptK58Test extends CIUnitTestCase
             'phone'                       => '028000000',
             'website'                     => 'tainguyenpos.test',
             'email'                       => 'store@example.test',
-            'payment_message'             => 'Mo cua 08:00 - 22:00',
+            'payment_message'             => '',
+            'return_policy'               => '',
+            'receipt_opening_hours'       => 'Thời gian mở cửa từ 7h - 22h30!',
+            'receipt_exchange_policy'     => 'Thời gian đổi hàng trong vòng 5 ngày, sản phẩm đổi có giá trị lớn hơn hoặc bằng sản phẩm được đổi!',
+            'receipt_thank_you'           => 'Cảm ơn quý khách và hẹn gặp lại!',
             'receipt_show_total_discount' => false,
             'receipt_show_description'    => true,
             'receipt_show_serialnumber'   => true,

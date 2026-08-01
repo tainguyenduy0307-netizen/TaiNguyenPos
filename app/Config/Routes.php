@@ -12,6 +12,20 @@ $routes->get('login', 'Login::index');
 $routes->post('login', 'Login::index');
 $routes->post('migrate', 'Login::migrate');
 
+$routes->get('sales', 'Sales::getIndex');
+$routes->post('sales/add', 'Sales::postAdd');
+$routes->post('sales/editItem/(:segment)', 'Sales::postEditItem/$1');
+$routes->get('sales/deleteItem/(:num)', 'Sales::getDeleteItem/$1');
+$routes->post('sales/selectCustomer', 'Sales::postSelectCustomer');
+$routes->post('sales/addPayment', 'Sales::postAddPayment');
+$routes->post('sales/complete', 'Sales::postComplete');
+$routes->get('sales/previewReceipt', 'Sales::getPreviewReceipt');
+$routes->get('sales/receipt/(:num)', 'Sales::getReceipt/$1');
+$routes->post('sales/orders/new', 'Sales::postNewOrder');
+$routes->post('sales/orders/switch/(:segment)', 'Sales::postSwitchOrder/$1');
+$routes->post('sales/orders/close/(:segment)', 'Sales::postCloseOrder/$1');
+$routes->post('sales/orders/amount-tendered', 'Sales::postOrderAmountTendered');
+
 $routes->add('no_access/index/(:segment)', 'No_access::index/$1');
 $routes->add('no_access/index/(:segment)/(:segment)', 'No_access::index/$1/$2');
 
