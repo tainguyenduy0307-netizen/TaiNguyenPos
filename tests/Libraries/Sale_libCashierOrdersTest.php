@@ -145,6 +145,33 @@ final class Sale_libCashierOrdersTest extends CIUnitTestCase
         $this->assertSame('Coca', $this->saleLib->get_cart()[1]['name']);
     }
 
+    public function testCashierOrdersKeepSaleLevelDiscountStateSeparate(): void
+    {
+        $this->saleLib->ensureCashierOrders();
+        $this->saleLib->set_cart([1 => $this->cartItem(101, 'Coca')]);
+        $this->saleLib->set_order_discount(PERCENT, '10', 'ORDER1');
+        $this->saleLib->saveActiveCashierOrder();
+
+        $this->saleLib->createCashierOrder();
+        $this->saleLib->set_cart([1 => $this->cartItem(202, 'Pepsi')]);
+        $this->saleLib->set_order_discount(FIXED, '5000', 'ORDER2');
+        $this->saleLib->saveActiveCashierOrder();
+
+        $orders = $this->saleLib->getCashierOrders();
+        $this->assertSame(PERCENT, (int) $orders['order_1']['sale_discount_type']);
+        $this->assertSame('10', (string) $orders['order_1']['sale_discount_value']);
+        $this->assertSame('ORDER1', $orders['order_1']['sale_discount_code']);
+        $this->assertSame(FIXED, (int) $orders['order_2']['sale_discount_type']);
+        $this->assertSame('5000', (string) $orders['order_2']['sale_discount_value']);
+        $this->assertSame('ORDER2', $orders['order_2']['sale_discount_code']);
+
+        $this->assertTrue($this->saleLib->restoreCashierOrder('order_1'));
+        $this->assertSame(PERCENT, $this->saleLib->get_order_discount_type());
+        $this->assertSame('10', $this->saleLib->get_order_discount_value());
+        $this->assertSame('ORDER1', $this->saleLib->get_order_discount_code());
+    }
+
+
     public function testCloseActiveOrderSwitchesToNearestOrderAndLastOrderResetsBlank(): void
     {
         $this->seedThreeOrders();

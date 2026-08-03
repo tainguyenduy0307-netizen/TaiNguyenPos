@@ -11,13 +11,14 @@ use App\Models\Employee;
 $template = $receipt_template_view ?? 'receipt_default';
 $isK58Template = $template === 'receipt_k58';
 $embeddedPrint = service('request')->getGet('embedded_print') === '1';
+$receiptK58CssVersion = is_file(FCPATH . 'css/receipt_k58.css') ? filemtime(FCPATH . 'css/receipt_k58.css') : time();
 
 ?>
 
 <?= view('partial/header') ?>
 
 <?php if ($isK58Template): ?>
-    <link rel="stylesheet" href="<?= base_url('css/receipt_k58.css') ?>">
+    <link rel="stylesheet" href="<?= base_url('css/receipt_k58.css?v=' . $receiptK58CssVersion) ?>">
 <?php endif; ?>
 
 <?php

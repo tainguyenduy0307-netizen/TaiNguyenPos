@@ -25,6 +25,7 @@ use Config\OSPOS;
 use ReflectionException;
 use RuntimeException;
 use stdClass;
+use Throwable;
 
 class Sales extends Secure_Controller
 {
@@ -843,12 +844,107 @@ class Sales extends Secure_Controller
             'total_units' => to_quantity_decimals($totals['total_units']),
             'subtotal' => to_currency($totals['subtotal']),
             'payments_total' => to_currency($totals['payment_total']),
+            'order_discount_label' => $this->formatOrderDiscountLabel($totals),
+            'order_discount_amount' => to_currency((string) $totals['order_discount_amount']),
+            'order_discount_amount_raw' => to_currency_no_money((string) $totals['order_discount_amount']),
+            'order_discount_code' => (string) $totals['order_discount_code'],
+            'order_discount_applied' => (float) $totals['order_discount_amount'] > 0,
             'total' => to_currency($displayTotal),
             'amount_due' => to_currency($displayAmountDue),
             'amount_due_raw' => to_currency_no_money($displayAmountDue),
             'change_due' => to_currency(abs(min(0, (float) $displayAmountDue))),
             'payments_cover_total' => (bool) $totals['payments_cover_total'],
         ];
+    }
+
+    public function postApplyDiscount(): ResponseInterface
+    {
+        $this->requireCurrentBusinessUnitId();
+
+        $discountType = $this->normalizeOrderDiscountType((string) $this->request->getPost('discount_type'));
+        if ($discountType === null) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Giá trị giảm giá không hợp lệ.',
+            ]);
+        }
+
+        $rawValue = trim((string) $this->request->getPost('discount_value'));
+        $discountValue = $discountType === FIXED
+            ? parse_decimals(str_replace('.', '', $rawValue))
+            : parse_decimals($rawValue);
+        $discountCode = (string) $this->request->getPost('discount_code', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
+
+        if ($discountValue === null || $discountValue < 0) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Giá trị giảm giá không hợp lệ.',
+            ]);
+        }
+
+        if ($discountType === PERCENT && $discountValue > 100) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Phần trăm giảm giá phải từ 0 đến 100.',
+            ]);
+        }
+
+        $cart = $this->sale_lib->get_cart();
+        $taxDetails = $this->tax_lib->get_taxes($cart);
+        $this->sale_lib->clear_order_discount();
+        $baseTotals = $this->sale_lib->get_totals($taxDetails[0]);
+        $discountBase = (string) $baseTotals['order_discount_base'];
+
+        if ($discountType === FIXED && bccomp((string) $discountValue, $discountBase, totals_decimals()) > 0) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Số tiền giảm không được lớn hơn tổng đơn hàng.',
+            ]);
+        }
+
+        $this->sale_lib->set_order_discount($discountType, (string) $discountValue, $discountCode);
+        $amountTendered = $this->request->getPost('amount_tendered');
+        $this->sale_lib->saveActiveCashierOrder(is_string($amountTendered) ? $amountTendered : null);
+
+        return $this->response->setJSON([
+            'success' => true,
+            'totals' => $this->buildRegisterTotalsForAjax($cart),
+        ]);
+    }
+
+    public function postRemoveDiscount(): ResponseInterface
+    {
+        $this->requireCurrentBusinessUnitId();
+        $this->sale_lib->clear_order_discount();
+        $amountTendered = $this->request->getPost('amount_tendered');
+        $this->sale_lib->saveActiveCashierOrder(is_string($amountTendered) ? $amountTendered : null);
+
+        return $this->response->setJSON([
+            'success' => true,
+            'totals' => $this->buildRegisterTotalsForAjax($this->sale_lib->get_cart()),
+        ]);
+    }
+
+    private function normalizeOrderDiscountType(string $discountType): ?int
+    {
+        return match ($discountType) {
+            'percent', (string) PERCENT => PERCENT,
+            'fixed', (string) FIXED => FIXED,
+            default => null,
+        };
+    }
+
+    private function formatOrderDiscountLabel(array $totals): string
+    {
+        if ((float) ($totals['order_discount_amount'] ?? 0) <= 0) {
+            return 'Giảm giá';
+        }
+
+        if (($totals['order_discount_type'] ?? null) === PERCENT) {
+            return 'Giảm giá (' . to_decimals((string) $totals['order_discount_value']) . '%)';
+        }
+
+        return 'Giảm giá';
     }
 
     /**
@@ -868,6 +964,28 @@ class Sales extends Secure_Controller
         $this->sale_lib->remove_customer();
 
         return $this->reload();
+    }
+
+    public function postRemoveCustomer(): ResponseInterface
+    {
+        try {
+            $this->requireCurrentBusinessUnitId();
+            $this->sale_lib->remove_customer();
+            $this->sale_lib->saveActiveCashierOrder($this->getPostedAmountTendered());
+
+            return $this->response->setJSON([
+                'success'       => true,
+                'message'       => '',
+                'customer_name' => 'Khách lẻ',
+            ]);
+        } catch (Throwable) {
+            return $this->response
+                ->setStatusCode(500)
+                ->setJSON([
+                    'success' => false,
+                    'message' => 'Không thể gỡ khách hàng khỏi đơn hiện tại.',
+                ]);
+        }
     }
 
     /**
@@ -943,6 +1061,11 @@ class Sales extends Secure_Controller
         $data['non_cash_total'] = $totals['total'];
         $data['cash_amount_due'] = $totals['cash_amount_due'];
         $data['non_cash_amount_due'] = $totals['amount_due'];
+        $data['order_discount_type'] = $totals['order_discount_type'];
+        $data['order_discount_value'] = $totals['order_discount_value'];
+        $data['order_discount_amount'] = $totals['order_discount_amount'];
+        $data['order_discount_code'] = $totals['order_discount_code'];
+        $data['order_discount_label'] = $this->formatOrderDiscountLabel($totals);
 
         // Prevent negative total sales (fraud/theft vector) - returns can have negative totals for legitimate refunds
         if ($this->sale_lib->get_mode() != 'return' && bccomp($totals['total'], '0') < 0) {
@@ -997,7 +1120,7 @@ class Sales extends Secure_Controller
             $invoice_view = $invoice_type;
 
             // Save the data to the sales table
-            $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details);
+            $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details, $this->sale_lib->get_order_discount_snapshot($totals['order_discount_base']));
             $data['sale_id'] = 'POS ' . $data['sale_id_num'];
             $data['invoice_number'] = $data['sale_id_num'] == NEW_ENTRY ? null : $this->sale->get_info($data['sale_id_num'])->getRow()->invoice_number;
 
@@ -1035,7 +1158,7 @@ class Sales extends Secure_Controller
                 $data['sale_status'] = SUSPENDED;
                 $sale_type = SALE_TYPE_WORK_ORDER;
 
-                $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details);
+                $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details, $this->sale_lib->get_order_discount_snapshot($totals['order_discount_base']));
                 $this->sale_lib->set_suspended_id($data['sale_id_num']);
 
                 $data['cart'] = $this->sale_lib->sort_and_filter_cart($data['cart']);
@@ -1063,7 +1186,7 @@ class Sales extends Secure_Controller
                 $data['sale_status'] = SUSPENDED;
                 $sale_type = SALE_TYPE_QUOTE;
 
-                $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details);
+                $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details, $this->sale_lib->get_order_discount_snapshot($totals['order_discount_base']));
                 $this->sale_lib->set_suspended_id($data['sale_id_num']);
 
                 $data['cart'] = $this->sale_lib->sort_and_filter_cart($data['cart']);
@@ -1081,7 +1204,7 @@ class Sales extends Secure_Controller
                 $sale_type = SALE_TYPE_POS;
             }
 
-            $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details);
+            $data['sale_id_num'] = $this->sale->save_value($sale_id, $data['sale_status'], $data['cart'], $customer_id, $employee_id, $data['comments'], $invoice_number, $work_order_number, $quote_number, $sale_type, $data['payments'], $data['dinner_table'], $tax_details, $this->sale_lib->get_order_discount_snapshot($totals['order_discount_base']));
 
             $data['sale_id'] = 'POS ' . $data['sale_id_num'];
             $data['invoice_number'] = $data['sale_id_num'] == NEW_ENTRY ? null : $this->sale->get_info($data['sale_id_num'])->getRow()->invoice_number;
@@ -1157,6 +1280,11 @@ class Sales extends Secure_Controller
             'cart'                    => $this->sale_lib->sort_and_filter_cart($cart),
             'taxes'                   => $taxes,
             'discount'                => $this->sale_lib->get_discount(),
+            'order_discount_type'     => $totals['order_discount_type'],
+            'order_discount_value'    => $totals['order_discount_value'],
+            'order_discount_amount'   => $totals['order_discount_amount'],
+            'order_discount_code'     => $totals['order_discount_code'],
+            'order_discount_label'    => $this->formatOrderDiscountLabel($totals),
             'prediscount_subtotal'    => $totals['prediscount_subtotal'],
             'subtotal'                => $totals['subtotal'],
             'total'                   => $totals['total'],
@@ -1374,6 +1502,11 @@ class Sales extends Secure_Controller
         $data['non_cash_total'] = $totals['total'];
         $data['cash_amount_due'] = $totals['cash_amount_due'];
         $data['non_cash_amount_due'] = $totals['amount_due'];
+        $data['order_discount_type'] = $totals['order_discount_type'];
+        $data['order_discount_value'] = $totals['order_discount_value'];
+        $data['order_discount_amount'] = $totals['order_discount_amount'];
+        $data['order_discount_code'] = $totals['order_discount_code'];
+        $data['order_discount_label'] = $this->formatOrderDiscountLabel($totals);
 
         if ($data['cash_mode'] && ($data['selected_payment_type'] === lang('Sales.cash') || $data['payments_total'] > 0)) {
             $data['total'] = $totals['cash_total'];
@@ -1507,6 +1640,11 @@ class Sales extends Secure_Controller
         $data['non_cash_total'] = $totals['total'];
         $data['cash_amount_due'] = $totals['cash_amount_due'];
         $data['non_cash_amount_due'] = $totals['amount_due'];
+        $data['order_discount_type'] = $totals['order_discount_type'];
+        $data['order_discount_value'] = $totals['order_discount_value'];
+        $data['order_discount_amount'] = $totals['order_discount_amount'];
+        $data['order_discount_code'] = $totals['order_discount_code'];
+        $data['order_discount_label'] = $this->formatOrderDiscountLabel($totals);
 
         $data['selected_payment_type'] = $this->sale_lib->get_payment_type();
 
@@ -1955,7 +2093,9 @@ class Sales extends Secure_Controller
         $data = [];
         $sales_taxes = [[], []];
 
-        if ($this->sale->save_value($sale_id, $sale_status, $cart, $customer_id, $employee_id, $comment, $invoice_number, $work_order_number, $quote_number, $sale_type, $payments, $dinner_table, $sales_taxes) == '-1') {
+        $totals = $this->sale_lib->get_totals($this->tax_lib->get_taxes($cart)[0]);
+
+        if ($this->sale->save_value($sale_id, $sale_status, $cart, $customer_id, $employee_id, $comment, $invoice_number, $work_order_number, $quote_number, $sale_type, $payments, $dinner_table, $sales_taxes, $this->sale_lib->get_order_discount_snapshot($totals['order_discount_base'])) == '-1') {
             $data['error'] = lang('Sales.unsuccessfully_suspended_sale');
         } else {
             $data['success'] = lang('Sales.successfully_suspended_sale');

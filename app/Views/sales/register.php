@@ -351,16 +351,14 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                     </div>
                     <div class="pos-customer-actions">
                         <button type="button" class="btn btn-default btn-sm" id="change_customer_button">Đổi khách</button>
-                        <?= anchor(
-                            "$controller_name/removeCustomer",
-                            '<span class="glyphicon glyphicon-remove"></span>',
-                            ['class' => 'btn btn-danger btn-sm pos-remove-customer-button', 'id' => 'remove_customer_button', 'title' => lang('Common.remove') . ' ' . lang('Customers.customer')]
-                        )
-                        ?>
+                        <button type="button" class="btn btn-danger btn-sm pos-remove-customer-button" id="remove_customer_button" title="<?= esc(lang('Common.remove') . ' ' . lang('Customers.customer'), 'attr') ?>">
+                            <span class="glyphicon glyphicon-remove"></span>
+                        </button>
                     </div>
                 </div>
             <?php } else { ?>
                 <div class="pos-side-section form-group" id="select_customer">
+                    <div class="pos-section-title">Khách hàng: Khách lẻ</div>
                     <div class="pos-customer-search-row">
                         <?= form_input(['name' => 'customer', 'id' => 'customer', 'class' => 'form-control input-sm', 'value' => '', 'placeholder' => 'Tìm khách hàng']) ?>
                         <button type="button" class="btn btn-sm cashier-customer-modal pos-new-customer-button" data-href="<?= "customers/viewCashier" ?>" data-mode="create" title="<?= lang(ucfirst($controller_name) . ".new_customer") ?>">
@@ -395,9 +393,46 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                 <th><?= isset($customer) ? 'Điểm hiện có' : 'Điểm thưởng' ?></th>
                 <th><?= esc($customer_points ?? 0) ?></th>
             </tr>
-            <tr>
-                <th>Giảm giá</th>
-                <th><?= to_currency($discount ?? 0) ?></th>
+            <tr class="pos-sale-discount-row">
+                <th>
+                    <label for="sale_discount_value" id="sale_discount_label"><?= esc($order_discount_label ?? 'Giảm giá') ?></label>
+                    <div class="pos-sale-discount-editor">
+                        <?= form_input([
+                            'name' => 'sale_discount_value',
+                            'id' => 'sale_discount_value',
+                            'class' => 'form-control input-sm',
+                            'value' => isset($order_discount_value) && (float) $order_discount_value > 0 ? to_currency_no_money($order_discount_value) : '',
+                            'placeholder' => '0',
+                        ]) ?>
+                        <?= form_dropdown(
+                            'sale_discount_type',
+                            [
+                                'percent' => '%',
+                                'fixed' => 'Số tiền',
+                            ],
+                            ($order_discount_type ?? PERCENT) === FIXED ? 'fixed' : 'percent',
+                            ['id' => 'sale_discount_type', 'class' => 'form-control input-sm']
+                        ) ?>
+                    </div>
+                    <?= form_input([
+                        'name' => 'sale_discount_code',
+                        'id' => 'sale_discount_code',
+                        'class' => 'form-control input-sm pos-sale-discount-code',
+                        'value' => $order_discount_code ?? '',
+                        'maxlength' => 64,
+                        'placeholder' => 'Mã voucher',
+                    ]) ?>
+                    <div id="sale_discount_error" class="text-danger pos-sale-discount-message"></div>
+                </th>
+                <th>
+                    <div id="sale_discount_amount" class="pos-sale-discount-amount">
+                        <?= (float) ($order_discount_amount ?? 0) > 0 ? '-' . to_currency($order_discount_amount) : 'Chưa áp dụng' ?>
+                    </div>
+                    <div class="pos-sale-discount-actions">
+                        <button type="button" id="apply_sale_discount" class="btn btn-xs btn-primary">Áp dụng</button>
+                        <button type="button" id="remove_sale_discount" class="btn btn-xs btn-default">Hủy</button>
+                    </div>
+                </th>
             </tr>
             <?php foreach ($taxes as $tax_group_index => $tax) { ?>
                 <tr class="pos-muted-total">
@@ -675,7 +710,7 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
     const keyboardShortcuts = <?= json_encode($keyboardShortcuts ?? []) ?>;
     const paymentsCoverTotal = <?= json_encode((bool) $payments_cover_total) ?>;
     const referenceCodePaymentTypes = <?= json_encode($reference_code_payment_types) ?>;
-    const registerAmountDue = <?= json_encode((float) $amount_due) ?>;
+    let registerAmountDue = <?= json_encode((float) $amount_due) ?>;
     const registerHasCartItems = <?= json_encode(count($cart) > 0) ?>;
     const cashierActiveOrderId = <?= json_encode($cashier_active_order_id) ?>;
     const registerInitialTenderedAmount = <?= json_encode($active_order_amount_tendered) ?>;
@@ -699,12 +734,90 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
             window.location.href = "<?= site_url('sales'); ?>";
         };
 
-        $("#remove_customer_button").click(function() {
-            $.post("<?= site_url('sales/removeCustomer'); ?>", redirect);
+        function renderCustomerSearch() {
+            return '<div class="pos-side-section form-group" id="select_customer">'
+                + '<div class="pos-section-title">Khách hàng: Khách lẻ</div>'
+                + '<div class="pos-customer-search-row">'
+                + '<input type="text" name="customer" id="customer" class="form-control input-sm" value="" placeholder="Tìm khách hàng">'
+                + '<button type="button" class="btn btn-sm cashier-customer-modal pos-new-customer-button" data-href="<?= esc('customers/viewCashier', 'js') ?>" data-mode="create" title="<?= esc(lang(ucfirst($controller_name) . '.new_customer'), 'js') ?>">'
+                + '<span class="glyphicon glyphicon-plus"></span>'
+                + '</button>'
+                + '</div>'
+                + '<button class="btn btn-default btn-sm modal-dlg pos-hidden-register-control" id="show_keyboard_help" data-href="<?= esc("$controller_name/salesKeyboardHelp", 'js') ?>" title="<?= esc(lang(ucfirst($controller_name) . '.key_title'), 'js') ?>">'
+                + '<span class="glyphicon glyphicon-share-alt"></span>'
+                + '</button>'
+                + '</div>';
+        }
+
+        function bindCustomerSearch() {
+            $('#customer')
+                .off('blur.cashierCustomer')
+                .on('blur.cashierCustomer', function() {
+                    if ($(this).val() == '') {
+                        $(this).attr('placeholder', 'Tên hoặc số điện thoại');
+                    }
+                })
+                .off('keypress.cashierCustomer')
+                .on('keypress.cashierCustomer', function(e) {
+                    if (e.which == 13) {
+                        $('#select_customer_form').submit();
+                        return false;
+                    }
+                });
+
+            $('#customer').autocomplete({
+                source: "<?= site_url('customers/suggest') ?>",
+                appendTo: '#select_customer',
+                minChars: 0,
+                delay: 10,
+                select: function(a, ui) {
+                    $(this).val(ui.item.value);
+                    $('#select_customer_form').submit();
+                    return false;
+                }
+            });
+        }
+
+        function removeCustomerFromActiveOrder(focusCustomerSearch) {
+            const $buttons = $('#remove_customer_button, #change_customer_button');
+            $buttons.prop('disabled', true);
+
+            $.ajax({
+                url: "<?= site_url('sales/removeCustomer'); ?>",
+                type: 'post',
+                dataType: 'json',
+                success: function(response) {
+                    if (!response || !response.success) {
+                        showRegisterPrintError((response && response.message) || 'Không thể gỡ khách hàng khỏi đơn hiện tại.');
+                        $buttons.prop('disabled', false);
+                        focusItemSearch(false);
+                        return;
+                    }
+
+                    $('#select_customer_form input[name="customer"][type="hidden"]').remove();
+                    $('.pos-customer-card').replaceWith(renderCustomerSearch());
+                    bindCustomerSearch();
+
+                    if (focusCustomerSearch) {
+                        $('#customer').focus().select();
+                    } else {
+                        focusItemSearch(false);
+                    }
+                },
+                error: function() {
+                    showRegisterPrintError('Không thể gỡ khách hàng khỏi đơn hiện tại.');
+                    $buttons.prop('disabled', false);
+                    focusItemSearch(false);
+                }
+            });
+        }
+
+        $(document).on('click', '#remove_customer_button', function() {
+            removeCustomerFromActiveOrder(false);
         });
 
-        $("#change_customer_button").click(function() {
-            $.post("<?= site_url('sales/removeCustomer'); ?>", redirect);
+        $(document).on('click', '#change_customer_button', function() {
+            removeCustomerFromActiveOrder(true);
         });
 
         function renderEmptyCartRow() {
@@ -715,26 +828,86 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                 + '</div>';
         }
 
-        function applyCartTotals(totals) {
+        function applyCartTotals(totals, preserveTenderedAmount) {
             if (!totals) {
                 return;
             }
 
+            preserveTenderedAmount = preserveTenderedAmount === true;
+            registerAmountDue = parseLocaleMoney(totals.amount_due_raw);
             $('#sale_item_count_label').text(totals.item_count_label);
             $('#sale_total_units').text(totals.total_units);
             $('#sale_subtotal').text(totals.subtotal);
+            $('#sale_discount_label').text(totals.order_discount_label || 'Giảm giá');
+            $('#sale_discount_amount').text(totals.order_discount_applied ? '-' + totals.order_discount_amount : 'Chưa áp dụng');
             $('#sale_total').text(totals.total);
             $('#sale_amount_due').text(totals.amount_due);
             $('#pos_change_due').text(totals.change_due);
-            $('[name="amount_tendered"]:enabled').val(totals.amount_due_raw);
-            $('.pos-payment-list').remove();
+            if (!preserveTenderedAmount) {
+                $('[name="amount_tendered"]:enabled').val(totals.amount_due_raw);
+                $('.pos-payment-list').remove();
+            }
 
             if (!totals.payments_cover_total) {
                 $('#payment_types').prop('disabled', false).selectpicker('refresh');
-                $('.non-giftcard-input[name="amount_tendered"]').prop('disabled', false).removeClass('disabled').val(totals.amount_due_raw);
+                $('.non-giftcard-input[name="amount_tendered"]').prop('disabled', false).removeClass('disabled');
+                if (!preserveTenderedAmount) {
+                    $('.non-giftcard-input[name="amount_tendered"]').val(totals.amount_due_raw);
+                }
                 $('#cashier-complete-sale').removeClass('disabled');
             }
+
+            updateRegisterChange();
         }
+
+        function applySaleDiscount(removeDiscount) {
+            $('#sale_discount_error').text('');
+
+            const payload = removeDiscount ? {} : {
+                discount_type: $('#sale_discount_type').val(),
+                discount_value: $('#sale_discount_value').val(),
+                discount_code: $('#sale_discount_code').val()
+            };
+            payload[<?= json_encode(csrf_token()) ?>] = <?= json_encode(csrf_hash()) ?>;
+            payload.amount_tendered = getActiveTenderedAmountValue();
+
+            $.ajax({
+                url: removeDiscount ? "<?= site_url('sales/removeDiscount'); ?>" : "<?= site_url('sales/applyDiscount'); ?>",
+                type: 'post',
+                data: payload,
+                dataType: 'json',
+                success: function(response) {
+                    if (!response || !response.success) {
+                        const message = (response && response.message) || 'Giá trị giảm giá không hợp lệ.';
+                        $('#sale_discount_error').text(message);
+                        showRegisterPrintError(message);
+                        return;
+                    }
+
+                    if (removeDiscount) {
+                        $('#sale_discount_value').val('');
+                        $('#sale_discount_code').val('');
+                    }
+
+                    applyCartTotals(response.totals, true);
+                    focusItemSearch(false);
+                },
+                error: function(xhr) {
+                    const response = xhr.responseJSON || {};
+                    const message = response.message || 'Giá trị giảm giá không hợp lệ.';
+                    $('#sale_discount_error').text(message);
+                    showRegisterPrintError(message);
+                }
+            });
+        }
+
+        $(document).on('click', '#apply_sale_discount', function() {
+            applySaleDiscount(false);
+        });
+
+        $(document).on('click', '#remove_sale_discount', function() {
+            applySaleDiscount(true);
+        });
 
         $(document).on('click', '.cashier-delete-line', function(event) {
             event.preventDefault();
@@ -959,34 +1132,15 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
             }
         };
 
-        $('#item, #customer').click(clear_fields).dblclick(function(event) {
+        $('#item').click(clear_fields).dblclick(function(event) {
+            $(this).autocomplete('search');
+        });
+        $(document).on('click', '#customer', clear_fields);
+        $(document).on('dblclick', '#customer', function() {
             $(this).autocomplete('search');
         });
 
-        $('#customer').blur(function() {
-            if ($(this).val() == '') {
-                $(this).attr('placeholder', 'Tên hoặc số điện thoại');
-            }
-        });
-
-        $('#customer').autocomplete({
-            source: "<?= site_url('customers/suggest') ?>",
-            appendTo: '#select_customer',
-            minChars: 0,
-            delay: 10,
-            select: function(a, ui) {
-                $(this).val(ui.item.value);
-                $('#select_customer_form').submit();
-                return false;
-            }
-        });
-
-        $('#customer').keypress(function(e) {
-            if (e.which == 13) {
-                $('#select_customer_form').submit();
-                return false;
-            }
-        });
+        bindCustomerSearch();
 
         $('.giftcard-input').autocomplete({
             source: "<?= site_url('giftcards/suggest') ?>",

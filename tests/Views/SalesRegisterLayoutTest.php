@@ -55,7 +55,6 @@ final class SalesRegisterLayoutTest extends CIUnitTestCase
 
         $this->assertStringContainsString($expectedHeader, $this->registerView);
         $this->assertStringNotContainsString('Giảm giá</div>', $this->registerView);
-        $this->assertStringContainsString('<th>Giảm giá</th>', $this->registerView);
         $this->assertStringNotContainsString('pos-cart-discount', $this->registerView);
         $this->assertStringNotContainsString('cashier-cart-cell discount', $this->registerView);
         $this->assertStringNotContainsString('discount_toggle', $this->registerView);
@@ -158,6 +157,53 @@ final class SalesRegisterLayoutTest extends CIUnitTestCase
         $this->assertStringNotContainsString('left:', $deleteCellCss);
         $this->assertStringNotContainsString('order:', $deleteCellCss);
         $this->assertStringNotContainsString('margin-left:', $deleteCellCss);
+    }
+
+    public function testRemoveCustomerUsesExplicitPostAjaxRouteAndNotGetLink(): void
+    {
+        $routes = file_get_contents(APPPATH . 'Config/Routes.php');
+        $salesController = file_get_contents(APPPATH . 'Controllers/Sales.php');
+
+        $this->assertStringContainsString("\$routes->post('sales/removeCustomer', 'Sales::postRemoveCustomer', ['filter' => 'csrf']);", $routes);
+        $this->assertStringContainsString('public function postRemoveCustomer()', $salesController);
+        $this->assertStringContainsString('id="remove_customer_button"', $this->registerView);
+        $this->assertStringContainsString('type="button"', $this->registerView);
+        $this->assertStringContainsString("site_url('sales/removeCustomer')", $this->registerView);
+        $this->assertStringContainsString("type: 'post'", $this->registerView);
+        $this->assertStringContainsString("dataType: 'json'", $this->registerView);
+        $this->assertStringContainsString('Khách hàng: Khách lẻ', $this->registerView);
+        $this->assertStringContainsString('Khách lẻ', $salesController);
+        $this->assertStringNotContainsString('"$controller_name/removeCustomer"', $this->registerView);
+        $this->assertStringNotContainsString('$.post("<?= site_url(\'sales/removeCustomer\'); ?>", redirect)', $this->registerView);
+    }
+
+    public function testSaleLevelDiscountEditorUsesPostAjaxRoutesBeforeGrandTotal(): void
+    {
+        $routes = file_get_contents(APPPATH . 'Config/Routes.php');
+        $salesController = file_get_contents(APPPATH . 'Controllers/Sales.php');
+
+        $this->assertStringContainsString("\$routes->post('sales/applyDiscount', 'Sales::postApplyDiscount', ['filter' => 'csrf']);", $routes);
+        $this->assertStringContainsString("\$routes->post('sales/removeDiscount', 'Sales::postRemoveDiscount', ['filter' => 'csrf']);", $routes);
+        $this->assertStringContainsString('public function postApplyDiscount()', $salesController);
+        $this->assertStringContainsString('public function postRemoveDiscount()', $salesController);
+        $this->assertStringContainsString("'id' => 'sale_discount_value'", $this->registerView);
+        $this->assertStringContainsString("'id' => 'sale_discount_type'", $this->registerView);
+        $this->assertStringContainsString("'id' => 'sale_discount_code'", $this->registerView);
+        $this->assertStringContainsString('id="apply_sale_discount"', $this->registerView);
+        $this->assertStringContainsString('id="remove_sale_discount"', $this->registerView);
+        $this->assertStringContainsString("site_url('sales/applyDiscount')", $this->registerView);
+        $this->assertStringContainsString("site_url('sales/removeDiscount')", $this->registerView);
+        $this->assertStringContainsString("payload[<?= json_encode(csrf_token()) ?>]", $this->registerView);
+        $this->assertStringContainsString("applyCartTotals(response.totals, true)", $this->registerView);
+
+        $discountPosition = strpos($this->registerView, '<tr class="pos-sale-discount-row">');
+        $grandTotalPosition = strpos($this->registerView, '<tr class="pos-grand-total cashier-grand-total-row">');
+        $this->assertIsInt($discountPosition);
+        $this->assertIsInt($grandTotalPosition);
+        $this->assertLessThan($grandTotalPosition, $discountPosition);
+
+        $this->assertMatchesRegularExpression('/#sale_totals \\.pos-sale-discount-row > th\s*\{[^}]*min-height:\s*78px;/s', $this->registerCss);
+        $this->assertMatchesRegularExpression('/\\.pos-sale-discount-editor\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 78px;/s', $this->registerCss);
     }
 
     public function testPaymentPanelShowsGrandTotalBeforeTenderedAndNoPaidTotalBlock(): void

@@ -7,6 +7,7 @@ use App\Models\Business_unit_item_unit_quantity;
 use App\Models\Item;
 use App\Models\Item_barcode;
 use App\Models\Item_unit;
+use CodeIgniter\Exceptions\PageNotFoundException;
 use CodeIgniter\Test\CIUnitTestCase;
 use CodeIgniter\Test\DatabaseTestTrait;
 use CodeIgniter\Test\FeatureTestTrait;
@@ -318,6 +319,196 @@ final class SalesScanBarcodeTest extends CIUnitTestCase
         $this->assertSame(0, (int) $item->deleted);
     }
 
+    public function testPostRemoveCustomerClearsOnlyActiveOrderCustomerAndKeepsCartPaymentAndOtherOrder(): void
+    {
+        [, $orderOneRetailUnitId] = $this->createItemWithUnits('RCUST1');
+        [, $orderTwoRetailUnitId] = $this->createItemWithUnits('RCUST2');
+        $orderOneCustomerId = $this->createCustomer('A', 7);
+        $orderTwoCustomerId = $this->createCustomer('B', 5);
+        $saleLib = new Sale_lib();
+
+        $this->postScan('RCUST1-RET');
+        $saleLib->set_customer($orderOneCustomerId);
+        $saleLib->addPayment(lang('Sales.cash'), '10000');
+        $saleLib->saveActiveCashierOrder('10.000');
+
+        $newOrderResponse = $this->withSession($this->requestSession())
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->post('sales/orders/new');
+        $newOrderResponse->assertOK();
+
+        $this->postScan('RCUST2-RET');
+        $saleLib->set_customer($orderTwoCustomerId);
+        $saleLib->addPayment(lang('Sales.cash'), '20000');
+        $saleLib->saveActiveCashierOrder('20.000');
+
+        $switchResponse = $this->withSession($this->requestSession())
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->post('sales/orders/switch/order_1');
+        $switchResponse->assertOK();
+
+        $cartBefore = session()->get('sales_cart');
+        $paymentsBefore = session()->get('sales_payments');
+        $orderTwoBefore = session()->get('cashier_orders')['order_2'];
+
+        try {
+            $this->withSession($this->requestSession())
+                ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+                ->get('sales/removeCustomer');
+            $this->fail('GET sales/removeCustomer should not be routed.');
+        } catch (PageNotFoundException) {
+            $this->addToAssertionCount(1);
+        }
+        $this->assertSame($orderOneCustomerId, $saleLib->get_customer());
+        $this->assertSame($cartBefore, session()->get('sales_cart'));
+        $this->assertSame($paymentsBefore, session()->get('sales_payments'));
+
+        $response = $this->withSession($this->requestSession())
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->post('sales/removeCustomer', [
+                csrf_token() => csrf_hash(),
+            ]);
+        $response->assertOK();
+        $payload = json_decode($response->getJSON(), true);
+
+        $this->assertTrue($payload['success']);
+        $this->assertSame('', $payload['message']);
+        $this->assertSame('Khách lẻ', $payload['customer_name']);
+        $this->assertSame(NEW_ENTRY, $saleLib->get_customer());
+        $this->assertSame($cartBefore, session()->get('sales_cart'));
+        $this->assertSame($paymentsBefore, session()->get('sales_payments'));
+
+        $orders = session()->get('cashier_orders');
+        $this->assertSame(NEW_ENTRY, $orders['order_1']['customer_id']);
+        $this->assertSame($cartBefore, $orders['order_1']['cart']);
+        $this->assertSame($paymentsBefore, $orders['order_1']['payments']);
+        $this->assertSame($orderTwoCustomerId, $orders['order_2']['customer_id']);
+        $this->assertSame($orderTwoBefore['cart'], $orders['order_2']['cart']);
+        $this->assertSame($orderTwoBefore['payments'], $orders['order_2']['payments']);
+        $this->assertSame($orderOneRetailUnitId, (int) reset($orders['order_1']['cart'])['item_unit_id']);
+        $this->assertSame($orderTwoRetailUnitId, (int) reset($orders['order_2']['cart'])['item_unit_id']);
+
+        $orderOneCustomer = db_connect()->table('customers')->where('person_id', $orderOneCustomerId)->get()->getRow();
+        $orderTwoCustomer = db_connect()->table('customers')->where('person_id', $orderTwoCustomerId)->get()->getRow();
+        $this->assertNotNull($orderOneCustomer);
+        $this->assertNotNull($orderTwoCustomer);
+        $this->assertSame(0, (int) $orderOneCustomer->deleted);
+        $this->assertSame(7, (int) $orderOneCustomer->points);
+        $this->assertSame(0, (int) $orderTwoCustomer->deleted);
+        $this->assertSame(5, (int) $orderTwoCustomer->points);
+    }
+
+    public function testSaleLevelPercentDiscountRecalculatesTotalsAndPreservesTenderedInput(): void
+    {
+        $this->createItemWithUnits('DISC10');
+        $this->postScan('DISC10-RET');
+        (new Sale_lib())->addPayment('cash', '2000');
+        $paymentsBefore = session()->get('sales_payments');
+
+        $response = $this->postApplyDiscount('percent', '10', 'SUMMER10', '20.000');
+        $payload = json_decode($response->getJSON(), true);
+
+        $this->assertTrue($payload['success']);
+        $this->assertMatchesRegularExpression('/Giảm giá \\(10[,.]00%\\)/', $payload['totals']['order_discount_label']);
+        $this->assertSame(to_currency(1000), $payload['totals']['order_discount_amount']);
+        $this->assertSame(to_currency(9000), $payload['totals']['total']);
+        $this->assertSame(to_currency(7000), $payload['totals']['amount_due']);
+        $this->assertSame('7.000', $payload['totals']['amount_due_raw']);
+        $this->assertSame('SUMMER10', session()->get('sales_discount_code'));
+        $this->assertSame($paymentsBefore, session()->get('sales_payments'));
+
+        $orders = session()->get('cashier_orders');
+        $this->assertSame(PERCENT, (int) $orders['order_1']['sale_discount_type']);
+        $this->assertSame('10', (string) $orders['order_1']['sale_discount_value']);
+        $this->assertSame('20.000', $orders['order_1']['amount_tendered']);
+        $this->assertSame($paymentsBefore, $orders['order_1']['payments']);
+    }
+
+    public function testSaleLevelFixedDiscountRecalculatesTotalsAndCanBeRemoved(): void
+    {
+        $this->createItemWithUnits('DISCFIX');
+        $this->postScan('DISCFIX-BOX-A');
+        (new Sale_lib())->addPayment('cash', '100000');
+        $paymentsBefore = session()->get('sales_payments');
+
+        $response = $this->postApplyDiscount('fixed', '150.000', 'VOUCHER150');
+        $payload = json_decode($response->getJSON(), true);
+
+        $this->assertTrue($payload['success']);
+        $this->assertSame('Giảm giá', $payload['totals']['order_discount_label']);
+        $this->assertSame(to_currency(150000), $payload['totals']['order_discount_amount']);
+        $this->assertSame(to_currency(75000), $payload['totals']['total']);
+        $this->assertSame($paymentsBefore, session()->get('sales_payments'));
+
+        $removeResponse = $this->withSession($this->requestSession())
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->post('sales/removeDiscount', [
+                csrf_token() => csrf_hash(),
+                'amount_tendered' => '100.000',
+            ]);
+        $removeResponse->assertOK();
+        $removePayload = json_decode($removeResponse->getJSON(), true);
+
+        $this->assertTrue($removePayload['success']);
+        $this->assertSame(to_currency(0), $removePayload['totals']['order_discount_amount']);
+        $this->assertFalse($removePayload['totals']['order_discount_applied']);
+        $this->assertSame(to_currency(225000), $removePayload['totals']['total']);
+        $this->assertNull(session()->get('sales_discount_type'));
+        $this->assertSame($paymentsBefore, session()->get('sales_payments'));
+    }
+
+    public function testSaleLevelDiscountValidationRejectsInvalidValues(): void
+    {
+        $this->createItemWithUnits('DISCVAL');
+        $this->postScan('DISCVAL-RET');
+
+        $percentResponse = $this->postApplyDiscount('percent', '101');
+        $percentPayload = json_decode($percentResponse->getJSON(), true);
+        $this->assertFalse($percentPayload['success']);
+        $this->assertSame('Phần trăm giảm giá phải từ 0 đến 100.', $percentPayload['message']);
+
+        $fixedResponse = $this->postApplyDiscount('fixed', '10.001');
+        $fixedPayload = json_decode($fixedResponse->getJSON(), true);
+        $this->assertFalse($fixedPayload['success']);
+        $this->assertSame('Số tiền giảm không được lớn hơn tổng đơn hàng.', $fixedPayload['message']);
+
+        $negativeResponse = $this->postApplyDiscount('fixed', '-1');
+        $negativePayload = json_decode($negativeResponse->getJSON(), true);
+        $this->assertFalse($negativePayload['success']);
+        $this->assertSame('Giá trị giảm giá không hợp lệ.', $negativePayload['message']);
+    }
+
+    public function testSaleLevelDiscountIsIndependentPerCashierOrder(): void
+    {
+        $this->createItemWithUnits('DORDER1');
+        $this->createItemWithUnits('DORDER2');
+
+        $this->postScan('DORDER1-RET');
+        $this->postApplyDiscount('percent', '10');
+
+        $newOrderResponse = $this->withSession($this->requestSession())
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->post('sales/orders/new');
+        $newOrderResponse->assertOK();
+
+        $this->postScan('DORDER2-RET');
+        $this->postApplyDiscount('fixed', '5.000');
+
+        $orders = session()->get('cashier_orders');
+        $this->assertSame(PERCENT, (int) $orders['order_1']['sale_discount_type']);
+        $this->assertSame('10', (string) $orders['order_1']['sale_discount_value']);
+        $this->assertSame(FIXED, (int) $orders['order_2']['sale_discount_type']);
+        $this->assertSame('5000', (string) $orders['order_2']['sale_discount_value']);
+
+        $switchResponse = $this->withSession($this->requestSession())
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->post('sales/orders/switch/order_1');
+        $switchResponse->assertOK();
+
+        $this->assertSame(PERCENT, (new Sale_lib())->get_order_discount_type());
+        $this->assertSame('10', (new Sale_lib())->get_order_discount_value());
+    }
+
     public function testEditingCartLineWithoutLineDiscountInputPreservesExistingDiscount(): void
     {
         [, $retailUnitId] = $this->createItemWithUnits('EDITNODISC');
@@ -371,6 +562,23 @@ final class SalesScanBarcodeTest extends CIUnitTestCase
         return $response;
     }
 
+    private function postApplyDiscount(string $type, string $value, string $code = '', string $amountTendered = ''): object
+    {
+        $response = $this->withSession($this->requestSession())
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->post('sales/applyDiscount', [
+                csrf_token() => csrf_hash(),
+                'discount_type' => $type,
+                'discount_value' => $value,
+                'discount_code' => $code,
+                'amount_tendered' => $amountTendered,
+            ]);
+
+        $response->assertOK();
+
+        return $response;
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -383,11 +591,17 @@ final class SalesScanBarcodeTest extends CIUnitTestCase
 
         foreach ([
             'sales_cart',
+            'sales_customer',
+            'sales_payments',
             'sales_mode',
             'sales_location',
             'cashier_orders',
             'cashier_active_order_id',
             'cashier_next_order_number',
+            'sales_discount_type',
+            'sales_discount_value',
+            'sales_discount_amount',
+            'sales_discount_code',
         ] as $key) {
             $value = session()->get($key);
             if ($value !== null) {
@@ -435,6 +649,45 @@ final class SalesScanBarcodeTest extends CIUnitTestCase
         return [$itemId, $retailUnitId, $largeUnitId];
     }
 
+    private function createCustomer(string $suffix, int $points): int
+    {
+        $db = db_connect();
+        $firstName = 'SCAN_TEST_CUSTOMER_' . $suffix;
+
+        $db->table('people')->insert([
+            'first_name'   => $firstName,
+            'last_name'    => 'Customer',
+            'gender'       => null,
+            'phone_number' => '09000000' . $suffix,
+            'email'        => strtolower($firstName) . '@example.test',
+            'address_1'    => '',
+            'address_2'    => '',
+            'city'         => '',
+            'state'        => '',
+            'zip'          => '',
+            'country'      => '',
+            'comments'     => '',
+        ]);
+        $personId = (int) $db->insertID();
+
+        $db->table('customers')->insert([
+            'person_id'       => $personId,
+            'company_name'    => null,
+            'account_number'  => null,
+            'taxable'         => 0,
+            'discount'        => '0.00',
+            'discount_type'   => PERCENT,
+            'package_id'      => null,
+            'points'          => $points,
+            'date'            => date('Y-m-d H:i:s'),
+            'employee_id'     => $this->employeeId,
+            'consent'         => 1,
+            'deleted'         => 0,
+        ]);
+
+        return $personId;
+    }
+
     private function getEmployeeIdForScope(string $scope): int
     {
         return (int) db_connect()
@@ -450,6 +703,8 @@ final class SalesScanBarcodeTest extends CIUnitTestCase
     private function removeScanTestData(): void
     {
         $db = db_connect();
+        $this->removeScanTestCustomers($db);
+
         $itemIds = array_map(
             'intval',
             array_column(
@@ -464,6 +719,26 @@ final class SalesScanBarcodeTest extends CIUnitTestCase
 
         if ($itemIds === []) {
             return;
+        }
+
+        $saleIds = array_map(
+            'intval',
+            array_column(
+                $db->table('sales_items')
+                    ->select('sale_id')
+                    ->whereIn('item_id', $itemIds)
+                    ->get()
+                    ->getResultArray(),
+                'sale_id'
+            )
+        );
+
+        if ($saleIds !== []) {
+            $db->table('sales_items_taxes')->whereIn('sale_id', $saleIds)->delete();
+            $db->table('sales_payments')->whereIn('sale_id', $saleIds)->delete();
+            $db->table('sales_items')->whereIn('sale_id', $saleIds)->delete();
+            $db->table('sales_taxes')->whereIn('sale_id', $saleIds)->delete();
+            $db->table('sales')->whereIn('sale_id', $saleIds)->delete();
         }
 
         $unitIds = array_map(
@@ -486,6 +761,35 @@ final class SalesScanBarcodeTest extends CIUnitTestCase
         $db->table('item_barcodes')->whereIn('item_id', $itemIds)->delete();
         $db->table('business_unit_item_quantities')->whereIn('item_id', $itemIds)->delete();
         $db->table('items')->whereIn('item_id', $itemIds)->delete();
+    }
+
+    private function removeScanTestCustomers($db): void
+    {
+        $personIds = array_map(
+            'intval',
+            array_column(
+                $db->table('people')
+                    ->select('person_id')
+                    ->like('first_name', 'SCAN_TEST_CUSTOMER_')
+                    ->get()
+                    ->getResultArray(),
+                'person_id'
+            )
+        );
+
+        if ($personIds === []) {
+            return;
+        }
+
+        if ($db->tableExists('customer_loyalty_adjustments')) {
+            $db->table('customer_loyalty_adjustments')->whereIn('customer_id', $personIds)->delete();
+        }
+        if ($db->tableExists('customer_loyalty_ledger')) {
+            $db->table('customer_loyalty_ledger')->whereIn('customer_id', $personIds)->delete();
+        }
+
+        $db->table('customers')->whereIn('person_id', $personIds)->delete();
+        $db->table('people')->whereIn('person_id', $personIds)->delete();
     }
 
     private function findCartLine(array $cart, int $itemUnitId): array

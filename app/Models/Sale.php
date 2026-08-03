@@ -31,8 +31,14 @@ class Sale extends Model
         'invoice_number',
         'dinner_table_id',
         'work_order_number',
-        'sale_type'
+        'sale_type',
+        'sale_discount_type',
+        'sale_discount_value',
+        'sale_discount_amount',
+        'sale_discount_code'
     ];
+
+    private ?bool $saleDiscountFieldsAvailable = null;
 
     public function __construct()
     {
@@ -57,8 +63,19 @@ class Sale extends Model
             . 'ELSE sales_items.quantity_purchased * (sales_items.item_unit_price - sales_items.discount) END';
 
         $sale_total = $config['tax_included']
-            ? "ROUND(SUM($sale_price), $decimals) + $cash_adjustment"
-            : "ROUND(SUM($sale_price), $decimals) + $sales_tax + $cash_adjustment";
+            ? "GREATEST(0, ROUND(SUM($sale_price), $decimals) + $cash_adjustment - " . $this->saleDiscountAmountSql() . ')'
+            : "GREATEST(0, ROUND(SUM($sale_price), $decimals) + $sales_tax + $cash_adjustment - " . $this->saleDiscountAmountSql() . ')';
+        $saleDiscountSelect = $this->saleDiscountFieldsAvailable()
+            ? ',
+                MAX(sales.sale_discount_type) AS sale_discount_type,
+                MAX(sales.sale_discount_value) AS sale_discount_value,
+                MAX(sales.sale_discount_amount) AS sale_discount_amount,
+                MAX(sales.sale_discount_code) AS sale_discount_code'
+            : ',
+                NULL AS sale_discount_type,
+                0 AS sale_discount_value,
+                0 AS sale_discount_amount,
+                "" AS sale_discount_code';
 
         $sql = 'sales.sale_id AS sale_id,
                 MAX(DATE(sales.sale_time)) AS sale_date,
@@ -83,7 +100,8 @@ class Sale extends Model
                 (MAX(payments.sale_payment_amount)) - ($sale_total) AS change_due,
                 " . '
                 MAX(payments.payment_type) AS payment_type,
-                MAX(payments.reference_code) AS reference_code';
+                MAX(payments.reference_code) AS reference_code'
+                . $saleDiscountSelect;
 
         $builder = $this->db->table('sales_items AS sales_items');
         $builder->select($sql);
@@ -153,7 +171,7 @@ class Sale extends Model
         $cash_adjustment = 'IFNULL(SUM(`payments`.`sale_cash_adjustment`), 0)';
 
         $sale_subtotal = "ROUND(SUM($sale_price), $decimals) - $internal_tax";
-        $sale_total = "ROUND(SUM($sale_price), $decimals) + $sales_tax + $cash_adjustment";
+        $sale_total = "GREATEST(0, ROUND(SUM($sale_price), $decimals) + $sales_tax + $cash_adjustment - " . $this->saleDiscountAmountSql('`' . $db_prefix . 'sales`') . ')';
 
         $this->create_temp_table_sales_items_taxes_data($where);
 
@@ -174,6 +192,7 @@ class Sale extends Model
                 'MAX(`customer`.`company_name`) AS company_name',
                 $sale_subtotal . ' AS subtotal',
                 $tax . ' AS tax',
+                'MAX(' . $this->saleDiscountAmountSql('`' . $db_prefix . 'sales`', false) . ') AS sale_discount_amount',
                 $sale_total . ' AS total',
                 $sale_cost . ' AS cost',
                 '(' . $sale_total . ' - ' . $sale_cost . ') AS profit',
@@ -567,7 +586,8 @@ class Sale extends Model
         int     $sale_type,
         ?array  $payments,
         ?int    $dinner_table_id,
-        ?array  &$sales_taxes
+        ?array  &$sales_taxes,
+        ?array  $sale_discount = null
     ): int {    // TODO: this method returns the sale_id but the override is expecting it to return a bool. The signature needs to be reworked.  Generally when there are more than 3 maybe 4 parameters, there's a good chance that an object needs to be passed rather than so many params.
         $businessUnitId = $this->getCurrentBusinessUnitId();
         $config = config(OSPOS::class)->settings;
@@ -614,6 +634,13 @@ class Sale extends Model
             'dinner_table_id'   => $dinner_table_id,
             'sale_type'         => $sale_type
         ];
+
+        if ($this->saleDiscountFieldsAvailable()) {
+            $sales_data['sale_discount_type'] = $sale_discount['type'] ?? null;
+            $sales_data['sale_discount_value'] = $sale_discount['value'] ?? 0;
+            $sales_data['sale_discount_amount'] = $sale_discount['amount'] ?? 0;
+            $sales_data['sale_discount_code'] = $sale_discount['code'] ?? null;
+        }
 
         $sales_data['invoice_number'] = $this->resolveScopedInvoiceNumber(
             (int) $saleStatus,
@@ -1164,13 +1191,20 @@ class Sale extends Model
         $sales_tax = 'IFNULL(SUM(sales_items_taxes.sales_tax), 0)';
         $internal_tax = 'IFNULL(SUM(sales_items_taxes.internal_tax), 0)';
         $cash_adjustment = 'IFNULL(SUM(payments.sale_cash_adjustment), 0)';
+        $line_order_discount = '0';
+        if ($this->saleDiscountFieldsAvailable()) {
+            $salesItemsTable = $this->db->prefixTable('sales_items');
+            $line_order_discount = 'CASE WHEN sales_items.line = (SELECT MIN(order_discount_items.line) FROM ' . $salesItemsTable
+                . ' AS order_discount_items WHERE order_discount_items.sale_id = sales.sale_id)'
+                . ' THEN MAX(IFNULL(sales.sale_discount_amount, 0)) ELSE 0 END';
+        }
 
         if ($config['tax_included']) {
-            $sale_total = "ROUND(SUM($sale_price), $decimals) + $cash_adjustment";
+            $sale_total = "GREATEST(0, ROUND(SUM($sale_price), $decimals) + $cash_adjustment - $line_order_discount)";
             $sale_subtotal = "$sale_total - $internal_tax";
         } else {
             $sale_subtotal = "ROUND(SUM($sale_price), $decimals) - $internal_tax + $cash_adjustment";
-            $sale_total = "ROUND(SUM($sale_price), $decimals) + $sales_tax + $cash_adjustment";
+            $sale_total = "GREATEST(0, ROUND(SUM($sale_price), $decimals) + $sales_tax + $cash_adjustment - $line_order_discount)";
         }
 
         // Create a temporary table to contain all the sum of taxes per sale item
@@ -1735,5 +1769,31 @@ class Sale extends Model
         if ($filters['only_wallet']) {
             $builder->like('payments.payment_type', lang('Sales.wallet'));
         }
+    }
+
+    private function saleDiscountFieldsAvailable(): bool
+    {
+        if ($this->saleDiscountFieldsAvailable !== null) {
+            return $this->saleDiscountFieldsAvailable;
+        }
+
+        $this->db->resetDataCache();
+        $this->saleDiscountFieldsAvailable = $this->db->fieldExists('sale_discount_amount', 'sales')
+            && $this->db->fieldExists('sale_discount_type', 'sales')
+            && $this->db->fieldExists('sale_discount_value', 'sales')
+            && $this->db->fieldExists('sale_discount_code', 'sales');
+
+        return $this->saleDiscountFieldsAvailable;
+    }
+
+    private function saleDiscountAmountSql(string $saleAlias = 'sales', bool $aggregate = true): string
+    {
+        if (!$this->saleDiscountFieldsAvailable()) {
+            return '0';
+        }
+
+        $expression = 'IFNULL(' . $saleAlias . '.sale_discount_amount, 0)';
+
+        return $aggregate ? 'MAX(' . $expression . ')' : $expression;
     }
 }

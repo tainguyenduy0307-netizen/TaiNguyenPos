@@ -315,6 +315,9 @@ class Sale_lib
             'cash_mode'           => $this->session->get('cash_mode'),
             'cash_rounding'       => $this->session->get('cash_rounding'),
             'cash_adjustment'     => $this->session->get('cash_adjustment_amount'),
+            'sale_discount_type'  => $this->session->get('sales_discount_type'),
+            'sale_discount_value' => $this->session->get('sales_discount_value'),
+            'sale_discount_code'  => $this->session->get('sales_discount_code'),
             'amount_tendered'     => $previousState['amount_tendered'] ?? null,
         ];
 
@@ -353,6 +356,9 @@ class Sale_lib
             'cash_mode'           => null,
             'cash_rounding'       => null,
             'cash_adjustment'     => null,
+            'sale_discount_type'  => null,
+            'sale_discount_value' => null,
+            'sale_discount_code'  => null,
             'amount_tendered'     => null,
         ];
     }
@@ -385,6 +391,10 @@ class Sale_lib
             'cash_mode',
             'cash_rounding',
             'cash_adjustment_amount',
+            'sales_discount_type',
+            'sales_discount_value',
+            'sales_discount_amount',
+            'sales_discount_code',
         ] as $sessionKey) {
             $this->session->remove($sessionKey);
         }
@@ -413,6 +423,9 @@ class Sale_lib
             'cash_mode'          => 'cash_mode',
             'cash_rounding'      => 'cash_rounding',
             'cash_adjustment'    => 'cash_adjustment_amount',
+            'sale_discount_type' => 'sales_discount_type',
+            'sale_discount_value'=> 'sales_discount_value',
+            'sale_discount_code' => 'sales_discount_code',
         ] as $stateKey => $sessionKey) {
             if (array_key_exists($stateKey, $state) && $state[$stateKey] !== null) {
                 $this->session->set($sessionKey, $state[$stateKey]);
@@ -1053,9 +1066,22 @@ class Sale_lib
             }
         }
 
+        $order_discount_base = $total;
+        $order_discount = $this->calculate_order_discount_amount($order_discount_base);
+        $total_discount = bcadd($total_discount, $order_discount);
+        $total = bcsub($total, $order_discount);
+        if (bccomp($total, '0', totals_decimals()) < 0) {
+            $total = '0';
+        }
+
         $totals['subtotal'] = $subtotal;
         $totals['total'] = $total;
         $totals['tax_total'] = $sales_tax;
+        $totals['order_discount_base'] = $order_discount_base;
+        $totals['order_discount_type'] = $this->get_order_discount_type();
+        $totals['order_discount_value'] = $this->get_order_discount_value();
+        $totals['order_discount_amount'] = $order_discount;
+        $totals['order_discount_code'] = $this->get_order_discount_code();
 
         $payment_total = $this->get_payments_total();
         $totals['payment_total'] = $payment_total;
@@ -1118,6 +1144,88 @@ class Sale_lib
 
         // Take care of rounding error introduced by round tripping payment amount to the browser
         return $rounded_due == 0 ? '0' : $amount_due;    // TODO: ===
+    }
+
+    public function set_order_discount(?int $discount_type, string $discount_value, string $discount_code = ''): void
+    {
+        if ($discount_type === null || bccomp($discount_value, '0', totals_decimals()) <= 0) {
+            $this->clear_order_discount();
+            return;
+        }
+
+        $discount_value = (string)round((float)$discount_value, $discount_type === PERCENT ? 2 : totals_decimals(), PHP_ROUND_HALF_UP);
+
+        $this->session->set('sales_discount_type', $discount_type);
+        $this->session->set('sales_discount_value', $discount_value);
+        $this->session->set('sales_discount_code', mb_substr(trim($discount_code), 0, 64));
+    }
+
+    public function clear_order_discount(): void
+    {
+        $this->session->remove('sales_discount_type');
+        $this->session->remove('sales_discount_value');
+        $this->session->remove('sales_discount_amount');
+        $this->session->remove('sales_discount_code');
+    }
+
+    public function get_order_discount_type(): ?int
+    {
+        $discount_type = $this->session->get('sales_discount_type');
+
+        return $discount_type === null ? null : (int)$discount_type;
+    }
+
+    public function get_order_discount_value(): string
+    {
+        return (string)($this->session->get('sales_discount_value') ?? '0');
+    }
+
+    public function get_order_discount_code(): string
+    {
+        return (string)($this->session->get('sales_discount_code') ?? '');
+    }
+
+    public function calculate_order_discount_amount(string $discount_base): string
+    {
+        $discount_type = $this->get_order_discount_type();
+        $discount_value = $this->get_order_discount_value();
+
+        if ($discount_type === null || bccomp($discount_value, '0', totals_decimals()) <= 0 || bccomp($discount_base, '0', totals_decimals()) <= 0) {
+            $this->session->set('sales_discount_amount', '0');
+            return '0';
+        }
+
+        if ($discount_type === PERCENT) {
+            $discount = bcmul($discount_base, bcdiv($discount_value, '100'));
+        } else {
+            $discount = $discount_value;
+        }
+
+        if (bccomp($discount, $discount_base, totals_decimals()) > 0) {
+            $discount = $discount_base;
+        }
+
+        $discount = (string)round((float)$discount, totals_decimals(), PHP_ROUND_HALF_UP);
+        $this->session->set('sales_discount_amount', $discount);
+
+        return $discount;
+    }
+
+    /**
+     * @return array{type:int|null,value:string,amount:string,code:string}
+     */
+    public function get_order_discount_snapshot(?string $discount_base = null): array
+    {
+        $amount = $discount_base === null
+            ? (string)($this->session->get('sales_discount_amount') ?? '0')
+            : $this->calculate_order_discount_amount($discount_base);
+
+        return [
+            'type'   => $this->get_order_discount_type(),
+            'value'  => $this->get_order_discount_value(),
+            'amount' => $amount,
+            'code'   => $this->get_order_discount_code(),
+        ];
     }
 
     /**
@@ -1859,6 +1967,13 @@ class Sale_lib
             $this->add_item($row->item_id, $row->item_location, $row->quantity_purchased, $row->discount, $row->discount_type, PRICE_MODE_STANDARD, null, null, $row->item_unit_price, $row->description, $row->serialnumber, $sale_id, true, $row->print_option);
         }
 
+        $saleInfo = $this->sale->get_info($sale_id)->getRowArray();
+        if (($saleInfo['sale_discount_amount'] ?? 0) > 0 && ($saleInfo['sale_discount_type'] ?? null) !== null) {
+            $this->set_order_discount((int)$saleInfo['sale_discount_type'], (string)$saleInfo['sale_discount_value'], (string)($saleInfo['sale_discount_code'] ?? ''));
+        } else {
+            $this->clear_order_discount();
+        }
+
         $this->session->set('cash_mode', CASH_MODE_FALSE);
 
         // Establish cash_mode for this sale by inspecting the payments
@@ -1922,6 +2037,7 @@ class Sale_lib
         $this->empty_payments();
         $this->remove_customer();
         $this->clear_cash_flags();
+        $this->clear_order_discount();
     }
 
     /**
@@ -2189,6 +2305,11 @@ class Sale_lib
             foreach ($tax_lib->get_taxes($cart)[0] as $tax) {
                 $total = bcadd($total, $tax['sale_tax_amount']);
             }
+        }
+
+        $total = bcsub($total, $this->calculate_order_discount_amount($total));
+        if (bccomp($total, '0', totals_decimals()) < 0) {
+            $total = '0';
         }
 
         if ($include_cash_rounding && $cash_mode) {

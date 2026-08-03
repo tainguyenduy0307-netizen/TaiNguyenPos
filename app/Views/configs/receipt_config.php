@@ -2,6 +2,28 @@
 /**
  * @var array $config
  */
+$receiptConfigValue = static fn (string $key, string $fallback = ''): string => array_key_exists($key, $config) ? (string) $config[$key] : $fallback;
+$receiptConfigChecked = static function (string $key, bool $fallback = true) use ($config): bool {
+    if (!array_key_exists($key, $config)) {
+        return $fallback;
+    }
+
+    if (is_bool($config[$key])) {
+        return $config[$key];
+    }
+
+    return !in_array(strtolower(trim((string) $config[$key])), ['', '0', 'false', 'no', 'off'], true);
+};
+$receiptLegacyFooterValue = static function (string $value, string $fallback): string {
+    $value = trim($value);
+    if ($value === '' || mb_strlen($value) < 12) {
+        return $fallback;
+    }
+
+    return $value;
+};
+$defaultReceiptExchangePolicy = 'Thời gian đổi hàng trong vòng 5 ngày, sản phẩm đổi có giá trị lớn hơn hoặc bằng sản phẩm được đổi!';
+$defaultReceiptThankYou = 'Cảm ơn quý khách và hẹn gặp lại!';
 ?>
 
 <?= form_open('config/saveReceipt/', ['id' => 'receipt_config_form', 'class' => 'form-horizontal']) ?>
@@ -192,6 +214,165 @@
                         'id'      => 'receipt_show_serialnumber',
                         'checked' => $config['receipt_show_serialnumber'] == 1
                     ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2" for="receipt_company">Tên cửa hàng K58</label>
+                <div class="col-xs-6">
+                    <?= form_input([
+                        'name'  => 'receipt_company',
+                        'id'    => 'receipt_company',
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_company', 'Siêu Thị Sữa Gia Phú 93')
+                    ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2" for="receipt_address">Địa chỉ K58</label>
+                <div class="col-xs-6">
+                    <?= form_textarea([
+                        'name'  => 'receipt_address',
+                        'id'    => 'receipt_address',
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_address', '449 đường Bình Mỹ, Bình Mỹ, Củ Chi, Thành Phố Hồ Chí Minh')
+                    ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2" for="receipt_phone">Điện thoại/Zalo K58</label>
+                <div class="col-xs-3">
+                    <?= form_input([
+                        'name'  => 'receipt_phone',
+                        'id'    => 'receipt_phone',
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_phone', '0867.807.957')
+                    ]) ?>
+                </div>
+                <div class="col-xs-3">
+                    <?= form_input([
+                        'name'  => 'receipt_phone_label',
+                        'id'    => 'receipt_phone_label',
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_phone_label', 'ĐT / Zalo:')
+                    ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2" for="receipt_facebook">Facebook</label>
+                <div class="col-xs-6">
+                    <?= form_input([
+                        'name'  => 'receipt_facebook',
+                        'id'    => 'receipt_facebook',
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_facebook', 'Siêu Thị Sữa Gia Phú 93')
+                    ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2" for="receipt_website">Website K58</label>
+                <div class="col-xs-3">
+                    <?= form_input([
+                        'name'  => 'receipt_website',
+                        'id'    => 'receipt_website',
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_website', $receiptConfigValue('website', 'sieuthiasuagiaphu93.vn'))
+                    ]) ?>
+                </div>
+                <div class="col-xs-3">
+                    <?= form_input([
+                        'name'  => 'receipt_email',
+                        'id'    => 'receipt_email',
+                        'type'  => 'email',
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_email', $receiptConfigValue('email', ''))
+                    ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2" for="receipt_title">Tiêu đề K58</label>
+                <div class="col-xs-6">
+                    <?= form_input([
+                        'name'  => 'receipt_title',
+                        'id'    => 'receipt_title',
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_title', 'HÓA ĐƠN BÁN HÀNG')
+                    ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2" for="receipt_opening_hours">Giờ mở cửa K58</label>
+                <div class="col-xs-6">
+                    <?= form_textarea([
+                        'name'  => 'receipt_opening_hours',
+                        'id'    => 'receipt_opening_hours',
+                        'rows'  => 2,
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_opening_hours', 'Thời gian mở cửa từ 7h - 22h30!')
+                    ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2" for="receipt_exchange_policy">Chính sách đổi hàng K58</label>
+                <div class="col-xs-6">
+                    <?= form_textarea([
+                        'name'  => 'receipt_exchange_policy',
+                        'id'    => 'receipt_exchange_policy',
+                        'rows'  => 4,
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_exchange_policy', $receiptLegacyFooterValue($receiptConfigValue('return_policy'), $defaultReceiptExchangePolicy))
+                    ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2" for="receipt_thank_you">Lời cảm ơn K58</label>
+                <div class="col-xs-6">
+                    <?= form_textarea([
+                        'name'  => 'receipt_thank_you',
+                        'id'    => 'receipt_thank_you',
+                        'rows'  => 2,
+                        'class' => 'form-control input-sm',
+                        'value' => $receiptConfigValue('receipt_thank_you', $receiptLegacyFooterValue($receiptConfigValue('receipt_footer'), $defaultReceiptThankYou))
+                    ]) ?>
+                </div>
+            </div>
+
+            <div class="form-group form-group-sm">
+                <label class="control-label col-xs-2">Ẩn/hiện K58</label>
+                <div class="col-xs-8">
+                    <?php foreach ([
+                        'receipt_show_address'         => 'Địa chỉ',
+                        'receipt_show_phone'           => 'Điện thoại',
+                        'receipt_show_facebook'        => 'Hiển thị Facebook',
+                        'receipt_show_website'         => 'Website/email',
+                        'receipt_show_customer_phone'  => 'SĐT khách',
+                        'receipt_show_service_fee'     => 'Phí dịch vụ',
+                        'receipt_show_discount'        => 'Chiết khấu',
+                        'receipt_show_tax'             => 'VAT/thuế',
+                        'receipt_show_amount_tendered' => 'Tiền khách đưa',
+                        'receipt_show_change'          => 'Tiền thừa',
+                        'receipt_show_opening_hours'   => 'Giờ mở cửa',
+                        'receipt_show_exchange_policy' => 'Chính sách đổi hàng',
+                        'receipt_show_thank_you'       => 'Lời cảm ơn',
+                    ] as $receiptOption => $receiptOptionLabel) { ?>
+                        <label class="checkbox-inline">
+                            <?= form_checkbox([
+                                'name'    => $receiptOption,
+                                'value'   => $receiptOption,
+                                'id'      => $receiptOption,
+                                'checked' => $receiptConfigChecked($receiptOption, true)
+                            ]) ?>
+                            <?= esc($receiptOptionLabel) ?>
+                        </label>
+                    <?php } ?>
                 </div>
             </div>
 

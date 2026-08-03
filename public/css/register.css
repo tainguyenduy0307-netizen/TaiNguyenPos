@@ -889,6 +889,57 @@ body.sales-register-screen .pos-muted-total th {
     font-weight: 500 !important;
 }
 
+body.sales-register-screen #sale_totals .pos-sale-discount-row > th {
+    height: auto;
+    min-height: 78px;
+    align-items: start;
+    padding: 6px 0;
+}
+
+body.sales-register-screen #sale_discount_label {
+    margin-bottom: 4px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+body.sales-register-screen .pos-sale-discount-editor {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 78px;
+    gap: 5px;
+}
+
+body.sales-register-screen .pos-sale-discount-editor .form-control,
+body.sales-register-screen .pos-sale-discount-code {
+    height: 28px;
+    padding: 3px 6px;
+    font-size: 12px;
+}
+
+body.sales-register-screen .pos-sale-discount-code {
+    margin-top: 5px;
+}
+
+body.sales-register-screen .pos-sale-discount-message {
+    min-height: 16px;
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 14px;
+}
+
+body.sales-register-screen .pos-sale-discount-amount {
+    color: #d32f2f;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 18px;
+}
+
+body.sales-register-screen .pos-sale-discount-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 6px;
+}
+
 body.sales-register-screen #sale_totals .cashier-grand-total-row > th {
     height: 46px !important;
     border-top: 1px solid #ffd1d1;

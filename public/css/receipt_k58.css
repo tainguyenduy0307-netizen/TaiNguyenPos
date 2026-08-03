@@ -3,26 +3,48 @@
     margin: 0;
 }
 
+html,
+body {
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    width: 100%;
+    min-width: 0;
+}
+
+.wrapper,
+.container {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
 @media print {
     html,
     body {
         margin: 0;
         padding: 0;
-        width: 100%;
     }
 
     body {
         display: flex;
         justify-content: center;
         align-items: flex-start;
+        width: 100%;
+        min-width: 0;
     }
 
     .wrapper,
     .container {
-        width: 58mm !important;
-        min-width: 58mm !important;
-        max-width: 58mm !important;
-        margin: 0 auto !important;
+        width: 100% !important;
+        max-width: none !important;
+        margin: 0 !important;
         padding: 0 !important;
     }
 
@@ -34,14 +56,14 @@
 
 #receipt_k58_wrapper {
     box-sizing: border-box;
-    width: 52mm;
-    max-width: 52mm;
+    width: 57mm;
+    max-width: 57mm;
     margin: 0 auto;
-    padding: 1.5mm 0;
+    padding: 1.5mm 0.6mm 5mm;
     color: #000;
     float: none;
     font-family: Arial, "DejaVu Sans", "Liberation Sans", sans-serif;
-    line-height: 1.22;
+    line-height: 1.28;
     overflow-wrap: anywhere;
     text-align: left;
 }
@@ -60,19 +82,31 @@
 
 #receipt_k58_wrapper .k58-company {
     font-weight: 700;
-    font-size: 15px;
+    font-size: 14.5px;
     line-height: 1.2;
+    text-transform: uppercase;
+}
+
+#receipt_k58_wrapper .k58-store-line {
+    font-size: 11px;
+    line-height: 1.26;
 }
 
 #receipt_k58_wrapper .k58-title {
     font-weight: 700;
     font-size: 12.5px;
-    margin: 1mm 0 1.5mm;
+    margin: 1mm 0 2.5mm;
 }
 
 #receipt_k58_wrapper .k58-separator {
-    border-top: 0.2mm solid #000;
-    margin: 1.5mm 0;
+    width: 100%;
+    border-top: 0.18mm solid #000;
+    margin: 1.4mm 0;
+}
+
+#receipt_k58_wrapper .k58-datetime {
+    margin: 0 0 4.5mm;
+    text-align: center;
 }
 
 #receipt_k58_wrapper .k58-line {
@@ -96,15 +130,24 @@
 #receipt_k58_wrapper .k58-item-header,
 #receipt_k58_wrapper .k58-item-calc {
     display: grid;
-    grid-template-columns: 1fr 10mm 1fr;
+    grid-template-columns: 35% 15% 50%;
     width: 100%;
     table-layout: fixed;
     column-gap: 1mm;
 }
 
+#receipt_k58_wrapper .k58-items,
+#receipt_k58_wrapper .k58-footer {
+    width: 100%;
+}
+
 #receipt_k58_wrapper .k58-item-header {
+    padding: 0.8mm 0;
+    border-top: 0.18mm solid #000;
+    border-bottom: 0.18mm solid #000;
     font-weight: 700;
-    margin-bottom: 0.8mm;
+    font-size: 11px;
+    margin-bottom: 1mm;
 }
 
 #receipt_k58_wrapper .k58-item-header span,
@@ -124,19 +167,31 @@
 }
 
 #receipt_k58_wrapper .k58-item {
-    margin-bottom: 1.3mm;
+    margin-bottom: 0;
+    padding: 3px 0 4px;
+    border-bottom: 1px solid #000;
     page-break-inside: avoid;
+}
+
+#receipt_k58_wrapper .k58-item:last-child {
+    border-bottom: 0;
 }
 
 #receipt_k58_wrapper .k58-item-name,
 #receipt_k58_wrapper .k58-item-note {
     width: 100%;
-    font-weight: 600;
+    font-weight: 700;
+    line-height: 1.24;
     overflow-wrap: anywhere;
     word-break: break-word;
 }
 
+#receipt_k58_wrapper .k58-item-name {
+    font-size: 10.5px;
+}
+
 #receipt_k58_wrapper .k58-item-note {
+    font-size: 10.5px;
     font-weight: 400;
 }
 
@@ -147,17 +202,39 @@
 
 #receipt_k58_wrapper .k58-total {
     font-weight: 700;
-    font-size: 1.08em;
+    font-size: 11px;
+}
+
+#receipt_k58_wrapper .k58-totals,
+#receipt_k58_wrapper .k58-payments {
+    width: 100%;
+    margin: 0;
+}
+
+#receipt_k58_wrapper .k58-totals .k58-line,
+#receipt_k58_wrapper .k58-payments .k58-line {
+    display: grid;
+    grid-template-columns: minmax(0, 55%) minmax(0, 45%);
+    column-gap: 1mm;
+}
+
+#receipt_k58_wrapper .k58-totals .k58-line span:last-child,
+#receipt_k58_wrapper .k58-payments .k58-line span:last-child {
+    max-width: none;
+}
+
+#receipt_k58_wrapper .k58-total span:first-child {
+    white-space: nowrap;
 }
 
 #receipt_k58_wrapper .k58-footer {
-    font-size: 0.9em;
+    font-size: 11px;
     font-style: italic;
-    line-height: 1.25;
+    line-height: 1.35;
 }
 
 #receipt_k58_wrapper .k58-footer > div {
-    margin-bottom: 1mm;
+    margin-bottom: 5px;
     overflow-wrap: anywhere;
     word-break: break-word;
 }
