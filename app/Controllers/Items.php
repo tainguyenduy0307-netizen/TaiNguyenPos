@@ -3,7 +3,9 @@
 namespace App\Controllers;
 
 use App\Libraries\Barcode_lib;
+use App\Libraries\ItemExcelImportService;
 use App\Libraries\Item_lib;
+use App\Libraries\SimpleZip;
 use App\Models\Attribute;
 use App\Models\Inventory;
 use App\Models\Item;
@@ -20,6 +22,7 @@ use Config\OSPOS;
 use Config\Services;
 use Exception;
 use ReflectionException;
+use RuntimeException;
 
 require_once('Secure_Controller.php');
 
@@ -37,6 +40,7 @@ class Items extends Secure_Controller
     private Stock_location $stock_location;
     private Supplier $supplier;
     private Tax_category $tax_category;
+    private ItemExcelImportService $itemExcelImportService;
     private array $config;
 
 
@@ -60,6 +64,7 @@ class Items extends Secure_Controller
         $this->stock_location = model(Stock_location::class);
         $this->supplier = model(Supplier::class);
         $this->tax_category = model(Tax_category::class);
+        $this->itemExcelImportService = new ItemExcelImportService();
         $this->config = config(OSPOS::class)->settings;
     }
 
@@ -969,6 +974,219 @@ class Items extends Secure_Controller
     public function getCsvImport(): string
     {
         return view('items/form_csv_import');
+    }
+
+    public function getExcelImport(): string
+    {
+        $this->requireExcelImportBusinessUnit();
+
+        return view('items/excel_import', [
+            'preview'          => null,
+            'import_result'    => null,
+            'error'            => null,
+            'business_unit'    => $this->getAccountScope() === 'NIGHT' ? 'NIGHT' : 'DAY',
+            'update_existing'  => false,
+            'replace_stock'    => false,
+            'preview_token'    => null,
+        ]);
+    }
+
+    public function postPreviewExcelImport(): string
+    {
+        $this->requireExcelImportBusinessUnit();
+
+        $businessUnit = $this->request->getPost('business_unit') === 'NIGHT' ? 'NIGHT' : 'DAY';
+        $updateExisting = $this->request->getPost('update_existing') !== null;
+        $replaceStock = $this->request->getPost('replace_stock') !== null;
+        $token = null;
+        $storedPath = null;
+
+        try {
+            $storedPath = $this->storeExcelImportUpload();
+            $preview = $this->itemExcelImportService->preview($storedPath, $businessUnit, $updateExisting, $replaceStock);
+            if ($preview['summary']['can_import']) {
+                $token = bin2hex(random_bytes(16));
+                $imports = $this->session->get('item_excel_imports') ?? [];
+                $imports[$token] = [
+                    'path'            => $storedPath,
+                    'business_unit'   => $businessUnit,
+                    'update_existing' => $updateExisting,
+                    'replace_stock'   => $replaceStock,
+                    'created_at'      => time(),
+                ];
+                $this->session->set('item_excel_imports', $imports);
+            } elseif (is_file($storedPath)) {
+                unlink($storedPath);
+            }
+
+            return view('items/excel_import', [
+                'preview'          => $preview,
+                'import_result'    => null,
+                'error'            => null,
+                'business_unit'    => $businessUnit,
+                'update_existing'  => $updateExisting,
+                'replace_stock'    => $replaceStock,
+                'preview_token'    => $token,
+            ]);
+        } catch (RuntimeException $exception) {
+            if ($storedPath !== null && is_file($storedPath)) {
+                unlink($storedPath);
+            }
+
+            return view('items/excel_import', [
+                'preview'          => null,
+                'import_result'    => null,
+                'error'            => $exception->getMessage(),
+                'business_unit'    => $businessUnit,
+                'update_existing'  => $updateExisting,
+                'replace_stock'    => $replaceStock,
+                'preview_token'    => $token,
+            ]);
+        }
+    }
+
+    public function postImportExcelFile(): string
+    {
+        $this->requireExcelImportBusinessUnit();
+
+        $token = (string) $this->request->getPost('preview_token');
+        $imports = $this->session->get('item_excel_imports') ?? [];
+        $import = $imports[$token] ?? null;
+
+        if ($import === null || !is_file($import['path'])) {
+            return view('items/excel_import', [
+                'preview'          => null,
+                'import_result'    => null,
+                'error'            => 'Preview token is invalid or expired. Please check the file again.',
+                'business_unit'    => 'DAY',
+                'update_existing'  => false,
+                'replace_stock'    => false,
+                'preview_token'    => null,
+            ]);
+        }
+
+        try {
+            $employeeId = $this->employee->get_logged_in_employee_info()->person_id;
+            $result = $this->itemExcelImportService->import(
+                $import['path'],
+                $import['business_unit'],
+                (bool) $import['update_existing'],
+                (bool) $import['replace_stock'],
+                (int) $employeeId
+            );
+
+            unlink($import['path']);
+            unset($imports[$token]);
+            $this->session->set('item_excel_imports', $imports);
+
+            return view('items/excel_import', [
+                'preview'          => null,
+                'import_result'    => $result,
+                'error'            => null,
+                'business_unit'    => $import['business_unit'],
+                'update_existing'  => (bool) $import['update_existing'],
+                'replace_stock'    => (bool) $import['replace_stock'],
+                'preview_token'    => null,
+            ]);
+        } catch (RuntimeException $exception) {
+            if (is_file($import['path'])) {
+                unlink($import['path']);
+            }
+            unset($imports[$token]);
+            $this->session->set('item_excel_imports', $imports);
+
+            return view('items/excel_import', [
+                'preview'          => null,
+                'import_result'    => null,
+                'error'            => $exception->getMessage(),
+                'business_unit'    => $import['business_unit'],
+                'update_existing'  => (bool) $import['update_existing'],
+                'replace_stock'    => (bool) $import['replace_stock'],
+                'preview_token'    => null,
+            ]);
+        }
+    }
+
+    public function getGenerateExcelTemplate(): DownloadResponse
+    {
+        $headers = [
+            'Mã hàng hóa',
+            'Tên hàng hóa',
+            'Tên nhóm',
+            'ĐVT',
+            'ĐVT Lớn',
+            'Mã ĐVT Lớn',
+            'Giá trị quy đổi',
+            'Giá bán',
+            'Giá bán ĐVT Lớn',
+            'Giá vốn',
+            'Tồn kho',
+        ];
+
+        $temporaryFile = tempnam(sys_get_temp_dir(), 'items_excel_template_');
+        if ($temporaryFile === false) {
+            throw new RuntimeException('Cannot generate Excel template.');
+        }
+
+        $cells = '';
+        foreach ($headers as $index => $header) {
+            $column = chr(ord('A') + $index);
+            $cells .= '<c r="' . $column . '1" t="inlineStr"><is><t>' . htmlspecialchars($header, ENT_XML1 | ENT_COMPAT, 'UTF-8') . '</t></is></c>';
+        }
+        $sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">' . $cells . '</row></sheetData></worksheet>';
+        SimpleZip::create($temporaryFile, [
+            '[Content_Types].xml' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
+            '_rels/.rels' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+            'xl/_rels/workbook.xml.rels' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+            'xl/workbook.xml' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Danh_muc_clean" sheetId="1" r:id="rId1"/></sheets></workbook>',
+            'xl/worksheets/sheet1.xml' => $sheet,
+        ]);
+
+        $content = file_get_contents($temporaryFile);
+        unlink($temporaryFile);
+
+        return $this->response->download('import_items_excel_template.xlsx', $content);
+    }
+
+    private function requireExcelImportBusinessUnit(): void
+    {
+        if ($this->getBusinessUnitId() === null || !in_array($this->getAccountScope(), ['DAY', 'NIGHT'], true)) {
+            throw new RuntimeException('Only DAY or NIGHT accounts can import item Excel files.');
+        }
+    }
+
+    private function storeExcelImportUpload(): string
+    {
+        $validationRule = [
+            'file_path' => [
+                'label' => 'Excel file',
+                'rules' => [
+                    'uploaded[file_path]',
+                    'max_size[file_path,10240]',
+                    'ext_in[file_path,xlsx]',
+                    'mime_in[file_path,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip]',
+                ],
+            ],
+        ];
+
+        if (!$this->validate($validationRule)) {
+            throw new RuntimeException($this->validator->getError('file_path'));
+        }
+
+        $file = $this->request->getFile('file_path');
+        if (!$file || !$file->isValid()) {
+            throw new RuntimeException('The uploaded Excel file is not valid.');
+        }
+
+        $directory = WRITEPATH . 'uploads/item_excel_imports';
+        if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+            throw new RuntimeException('Cannot create temporary import directory.');
+        }
+
+        $filename = bin2hex(random_bytes(16)) . '.xlsx';
+        $file->move($directory, $filename, true);
+
+        return $directory . DIRECTORY_SEPARATOR . $filename;
     }
 
     /**

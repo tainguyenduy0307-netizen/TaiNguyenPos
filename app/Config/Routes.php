@@ -13,9 +13,11 @@ $routes->post('login', 'Login::index');
 $routes->post('migrate', 'Login::migrate');
 
 $routes->get('sales', 'Sales::getIndex');
+$routes->get('sales/itemSearch', 'Sales::getItemSearch');
 $routes->post('sales/add', 'Sales::postAdd');
 $routes->post('sales/editItem/(:segment)', 'Sales::postEditItem/$1');
-$routes->get('sales/deleteItem/(:num)', 'Sales::getDeleteItem/$1');
+$routes->post('sales/switchItemUnit/(:segment)', 'Sales::postSwitchItemUnit/$1');
+$routes->post('sales/deleteItem/(:num)', 'Sales::postDeleteItem/$1');
 $routes->post('sales/selectCustomer', 'Sales::postSelectCustomer');
 $routes->post('sales/addPayment', 'Sales::postAddPayment');
 $routes->post('sales/complete', 'Sales::postComplete');

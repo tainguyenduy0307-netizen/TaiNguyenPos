@@ -490,7 +490,7 @@ function get_item_data_row(object $item): array
         'company_name'  => $item->company_name,    // TODO: This isn't in the items table. Should this be here?
         'cost_price'    => to_currency($item->cost_price),
         'unit_price'    => to_currency($item->unit_price),
-        'quantity'      => to_quantity_decimals($item->quantity),
+        'quantity'      => format_item_unit_quantities($item),
         'tax_percents'  => !$tax_percents ? '-' : $tax_percents,
         'item_pic'      => $image
     ];
@@ -525,6 +525,23 @@ function get_item_data_row(object $item): array
     ];
 
     return $columns + expand_attribute_values($definition_names, (array) $item) + $icons;
+}
+
+function format_item_unit_quantities(object $item): string
+{
+    $retailQuantity = to_quantity_decimals((string) ($item->quantity ?? 0));
+    if (($item->large_quantity ?? null) === null) {
+        return $retailQuantity;
+    }
+
+    $retailUnitName = trim((string) ($item->retail_unit_name ?? ''));
+    $largeUnitName = trim((string) ($item->large_unit_name ?? ''));
+
+    return ($retailUnitName !== '' ? esc($retailUnitName) . ': ' : '')
+        . $retailQuantity
+        . ' | '
+        . ($largeUnitName !== '' ? esc($largeUnitName) . ': ' : '')
+        . to_quantity_decimals((string) $item->large_quantity);
 }
 
 function giftcard_headers(): array

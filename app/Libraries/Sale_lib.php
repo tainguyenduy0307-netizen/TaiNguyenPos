@@ -3,10 +3,13 @@
 namespace app\Libraries;
 
 use App\Libraries\BusinessUnitInventoryService;
+use App\Libraries\BusinessUnitService;
+use App\Models\Business_unit_item_unit_quantity;
 use App\Models\Attribute;
 use App\Models\Customer;
 use App\Models\Dinner_table;
 use App\Models\Item;
+use App\Models\Item_unit;
 use App\Models\Item_kit_items;
 use App\Models\Item_taxes;
 use App\Models\Enums\Rounding_mode;
@@ -48,7 +51,10 @@ class Sale_lib
     private Item $item;
     private Item_kit_items $item_kit_items;
     private BusinessUnitInventoryService $businessUnitInventory;
+    private BusinessUnitService $businessUnitService;
+    private Business_unit_item_unit_quantity $businessUnitItemUnitQuantity;
     private Item_taxes $item_taxes;
+    private Item_unit $item_unit;
     private Sale $sale;
     private Stock_location $stock_location;
     private Session $session;
@@ -62,8 +68,11 @@ class Sale_lib
         $this->customer = model(Customer::class);
         $this->dinner_table = model(Dinner_table::class);
         $this->item = model(Item::class);
+        $this->item_unit = model(Item_unit::class);
         $this->item_kit_items = model(Item_kit_items::class);
         $this->businessUnitInventory = Services::businessUnitInventory();
+        $this->businessUnitService = new BusinessUnitService();
+        $this->businessUnitItemUnitQuantity = model(Business_unit_item_unit_quantity::class);
         $this->item_taxes = model(Item_taxes::class);
         $this->sale = model(Sale::class);
         $this->stock_location = model(Stock_location::class);
@@ -1344,9 +1353,20 @@ class Sale_lib
      * @param bool|null $line
      * @return bool
      */
-    public function add_item(string &$item_id, int $item_location, string $quantity = '1', string &$discount = '0.0', int $discount_type = 0, int $price_mode = PRICE_MODE_STANDARD, ?int $kit_price_option = null, ?int $kit_print_option = null, ?string $price_override = null, ?string $description = null, ?string $serialnumber = null, ?int $sale_id = null, bool $include_deleted = false, ?bool $print_option = null, ?bool $line = null): bool
+    public function add_item(string &$item_id, int $item_location, string $quantity = '1', string &$discount = '0.0', int $discount_type = 0, int $price_mode = PRICE_MODE_STANDARD, ?int $kit_price_option = null, ?int $kit_print_option = null, ?string $price_override = null, ?string $description = null, ?string $serialnumber = null, ?int $sale_id = null, bool $include_deleted = false, ?bool $print_option = null, ?bool $line = null, ?int $item_unit_id = null): bool
     {
-        $item_info = $this->item->get_info_by_id_or_number($item_id, $include_deleted);
+        $requestedItem = $item_id;
+        if ($item_unit_id !== null) {
+            $saleUnit = $this->resolveSaleUnitById($item_unit_id);
+            $item_info = $saleUnit !== null ? $this->item->get_info($saleUnit['item_id']) : '';
+        } else {
+            $saleUnit = null;
+            $item_info = $this->item->get_info_by_id_or_number($item_id, $include_deleted);
+            if (empty($item_info)) {
+                $saleUnit = $this->resolveSaleUnit($requestedItem);
+                $item_info = $saleUnit !== null ? $this->item->get_info($saleUnit['item_id']) : '';
+            }
+        }
 
         // Make sure item exists
         if (empty($item_info)) {
@@ -1354,13 +1374,15 @@ class Sale_lib
             return false;
         }
 
+        $saleUnit = $saleUnit ?? $this->resolveDefaultRetailUnit((int) $item_info->item_id);
+
         $applied_discount = $discount;
         $item_id = $item_info->item_id;
         $item_type = $item_info->item_type;
         $stock_type = $item_info->stock_type;
 
-        $price = $item_info->unit_price;
-        $cost_price = $item_info->cost_price;
+        $price = $saleUnit['unit_price'] ?? $item_info->unit_price;
+        $cost_price = $saleUnit['cost_price'] ?? $item_info->cost_price;
         if ($price_override != null) {
             $price = $price_override;
         }
@@ -1413,7 +1435,11 @@ class Sale_lib
                 $maxkey = $item['line'];
             }
 
-            if ($item['item_id'] == $item_id && $item['item_location'] == $item_location) {    // TODO: === ?
+            if (
+                $item['item_id'] == $item_id
+                && $item['item_location'] == $item_location
+                && (int) ($item['item_unit_id'] ?? 0) === (int) ($saleUnit['item_unit_id'] ?? 0)
+            ) {    // TODO: === ?
                 $itemalreadyinsale = true;
                 $updatekey = $item['line'];
                 if (!$item_info->is_serialized) {
@@ -1457,6 +1483,11 @@ class Sale_lib
             $item = [
                 $insertkey => [
                     'item_id'               => $item_id,
+                    'item_unit_id'          => $saleUnit['item_unit_id'] ?? null,
+                    'unit_type'             => $saleUnit['unit_type'] ?? Item_unit::TYPE_RETAIL,
+                    'unit_name'             => $saleUnit['unit_name'] ?? ($item_info->pack_name ?? ''),
+                    'conversion_quantity'   => $saleUnit['conversion_quantity'] ?? 1,
+                    'available_units'       => $this->item_unit->getUnitsForItem((int) $item_id),
                     'item_location'         => $item_location,
                     'stock_name'            => $this->stock_location->get_location_name($item_location),
                     'line'                  => $insertkey,
@@ -1471,7 +1502,7 @@ class Sale_lib
                     'quantity'              => $quantity,
                     'discount'              => $applied_discount,
                     'discount_type'         => $discount_type,
-                    'in_stock'              => $this->businessUnitInventory->getCurrentQuantity($item_id, $item_location) ?? 0.0,
+                    'in_stock'              => $this->getCurrentUnitQuantity($saleUnit['item_unit_id'] ?? null, (int) $item_id, $item_location),
                     'price'                 => $price,
                     'cost_price'            => $cost_price,
                     'total'                 => $total,
@@ -1498,20 +1529,85 @@ class Sale_lib
         return true;
     }
 
+    private function resolveSaleUnit(string $itemIdOrBarcode): ?array
+    {
+        $largeUnit = $this->item_unit->getLargeUnitByBarcode($itemIdOrBarcode);
+        if ($largeUnit === null) {
+            return null;
+        }
+
+        return $this->unitToCartData($largeUnit);
+    }
+
+    private function resolveSaleUnitById(int $itemUnitId): ?array
+    {
+        $unit = $this->item_unit->getUnitById($itemUnitId);
+        if ($unit === null) {
+            return null;
+        }
+
+        return $this->unitToCartData($unit);
+    }
+
+    private function resolveDefaultRetailUnit(int $itemId): ?array
+    {
+        $retailUnit = $this->item_unit->getRetailUnit($itemId);
+        if ($retailUnit === null) {
+            return null;
+        }
+
+        return $this->unitToCartData($retailUnit);
+    }
+
+    private function unitToCartData(object $unit): array
+    {
+        return [
+            'item_unit_id' => (int) $unit->item_unit_id,
+            'item_id' => (int) $unit->item_id,
+            'unit_type' => (string) $unit->unit_type,
+            'unit_name' => (string) $unit->unit_name,
+            'conversion_quantity' => (float) $unit->conversion_quantity,
+            'unit_price' => (float) $unit->unit_price,
+            'cost_price' => (float) $unit->cost_price,
+        ];
+    }
+
+    private function getCurrentUnitQuantity(?int $itemUnitId, int $itemId, int $itemLocation): float
+    {
+        if ($itemUnitId !== null && $itemUnitId > 0) {
+            $businessUnitId = $this->businessUnitService->getCurrentBusinessUnitId();
+            if ($businessUnitId !== null) {
+                $this->businessUnitItemUnitQuantity->ensureZeroRow($businessUnitId, $itemUnitId);
+                return $this->businessUnitItemUnitQuantity->getQuantity($businessUnitId, $itemUnitId);
+            }
+        }
+
+        return $this->businessUnitInventory->getCurrentQuantity($itemId, $itemLocation) ?? 0.0;
+    }
+
     /**
      * @param int $item_id
      * @param int $item_location
      * @return string
      */
-    public function out_of_stock(int $item_id, int $item_location): string
+    public function out_of_stock(string|int $item_id, int $item_location): string
     {
         // Make sure item exists
         if ($item_id != -1) {    // TODO: !== ?.  Also Replace -1 with a constant
-            $item_info = $this->item->get_info_by_id_or_number($item_id);
+            $saleUnit = null;
+            $item_info = $this->item->get_info_by_id_or_number((string) $item_id);
+            if (empty($item_info)) {
+                $saleUnit = $this->resolveSaleUnit((string) $item_id);
+                $item_info = $saleUnit !== null ? $this->item->get_info($saleUnit['item_id']) : '';
+            }
+            if (empty($item_info)) {
+                return '';
+            }
+            $saleUnit = $saleUnit ?? $this->resolveDefaultRetailUnit((int) ($item_info->item_id ?? 0));
 
             if ($item_info->stock_type == HAS_STOCK) {    // TODO: === ?
-                $itemQuantity = $this->businessUnitInventory->getCurrentQuantity($item_id, $item_location) ?? 0.0;
-                $quantity_added = $this->get_quantity_already_added($item_id, $item_location);
+                $itemQuantity = $this->getCurrentUnitQuantity($saleUnit['item_unit_id'] ?? null, (int) $item_info->item_id, $item_location);
+                $quantity_added = $this->get_quantity_already_added((int) $item_info->item_id, $item_location, $saleUnit['item_unit_id'] ?? null);
 
                 if ($itemQuantity - $quantity_added < 0) {
                     return lang('Sales.quantity_less_than_zero');
@@ -1529,12 +1625,16 @@ class Sale_lib
      * @param int $item_location
      * @return string
      */
-    public function get_quantity_already_added(int $item_id, int $item_location): string
+    public function get_quantity_already_added(int $item_id, int $item_location, ?int $item_unit_id = null): string
     {
         $items = $this->get_cart();
         $quantity_already_added = '0.0';
         foreach ($items as $item) {
-            if ($item['item_id'] == $item_id && $item['item_location'] == $item_location) {    // TODO: === ?
+            if (
+                $item['item_id'] == $item_id
+                && $item['item_location'] == $item_location
+                && ($item_unit_id === null || (int) ($item['item_unit_id'] ?? 0) === $item_unit_id)
+            ) {    // TODO: === ?
                 $quantity_already_added += $item['quantity'];    // TODO: for precision we likely need to use bcadd() since we are using that everywhere else for quantity
             }
         }
@@ -1596,11 +1696,79 @@ class Sale_lib
         return false;    // TODO: This function will always return false.
     }
 
+    public function switch_item_unit(int $line, int $itemUnitId): bool
+    {
+        $items = $this->get_cart();
+        if (!isset($items[$line])) {
+            return false;
+        }
+
+        $source = $items[$line];
+        $targetUnit = $this->item_unit->getUnitById($itemUnitId);
+        if ($targetUnit === null || (int) $targetUnit->item_id !== (int) $source['item_id']) {
+            return false;
+        }
+
+        foreach ($items as $existingLine => $existingItem) {
+            if (
+                (int) $existingLine !== $line
+                && (int) $existingItem['item_id'] === (int) $source['item_id']
+                && (int) $existingItem['item_location'] === (int) $source['item_location']
+                && (int) ($existingItem['item_unit_id'] ?? 0) === $itemUnitId
+            ) {
+                $items[$existingLine]['quantity'] = bcadd((string) $existingItem['quantity'], (string) $source['quantity']);
+                $items[$existingLine]['total'] = $this->get_item_total(
+                    $items[$existingLine]['quantity'],
+                    $items[$existingLine]['price'],
+                    $items[$existingLine]['discount'],
+                    $items[$existingLine]['discount_type']
+                );
+                $items[$existingLine]['discounted_total'] = $this->get_item_total(
+                    $items[$existingLine]['quantity'],
+                    $items[$existingLine]['price'],
+                    $items[$existingLine]['discount'],
+                    $items[$existingLine]['discount_type'],
+                    true
+                );
+                unset($items[$line]);
+                $this->set_cart($items);
+                return true;
+            }
+        }
+
+        $unitData = $this->unitToCartData($targetUnit);
+        $items[$line]['item_unit_id'] = $unitData['item_unit_id'];
+        $items[$line]['unit_type'] = $unitData['unit_type'];
+        $items[$line]['unit_name'] = $unitData['unit_name'];
+        $items[$line]['conversion_quantity'] = $unitData['conversion_quantity'];
+        $items[$line]['price'] = $unitData['unit_price'];
+        $items[$line]['cost_price'] = $unitData['cost_price'];
+        $items[$line]['in_stock'] = $this->getCurrentUnitQuantity($unitData['item_unit_id'], (int) $source['item_id'], (int) $source['item_location']);
+        $items[$line]['available_units'] = $this->item_unit->getUnitsForItem((int) $source['item_id']);
+        $items[$line]['total'] = $this->get_item_total(
+            $items[$line]['quantity'],
+            $items[$line]['price'],
+            $items[$line]['discount'],
+            $items[$line]['discount_type']
+        );
+        $items[$line]['discounted_total'] = $this->get_item_total(
+            $items[$line]['quantity'],
+            $items[$line]['price'],
+            $items[$line]['discount'],
+            $items[$line]['discount_type'],
+            true
+        );
+        $this->set_cart($items);
+
+        return true;
+    }
+
     /**
      * @param int $line
+     * @param bool $deleteTempItem
      * @return bool
      */
-    public function delete_item(int $line): bool
+    public function delete_item(int $line, bool $deleteTempItem = true): bool
     {
         $items = $this->get_cart();
 
@@ -1610,7 +1778,7 @@ class Sale_lib
 
         $item_type = $items[$line]['item_type'];
 
-        if ($item_type == ITEM_TEMP) {
+        if ($deleteTempItem && $item_type == ITEM_TEMP) {
             $item_id = $items[$line]['item_id'];
             $this->item->delete($item_id);
         }
@@ -1639,7 +1807,7 @@ class Sale_lib
         $this->remove_customer();
 
         foreach ($this->sale->get_sale_items_ordered($sale_id)->getResult() as $row) {
-            $this->add_item($row->item_id, $row->item_location, -$row->quantity_purchased, $row->discount, $row->discount_type, PRICE_MODE_STANDARD, null, null, $row->item_unit_price, $row->description, $row->serialnumber, null, true);
+            $this->add_item($row->item_id, $row->item_location, -$row->quantity_purchased, $row->discount, $row->discount_type, PRICE_MODE_STANDARD, null, null, $row->item_unit_price, $row->description, $row->serialnumber, null, true, null, null, $row->item_unit_id ?? null);
         }
 
         $this->set_customer($this->sale->get_customer($sale_id)->person_id);

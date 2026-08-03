@@ -34,7 +34,7 @@ body.sales-register-screen .pos-hidden-register-control {
 }
 
 body.sales-register-screen #register_wrapper {
-    --cashier-cart-columns: 9% 35% 15% 13% 13% 11% 4%;
+    --cashier-cart-columns: 15% 35% 15% 12% 18% 5%;
 
     float: left;
     width: calc(100vw - 628px);
@@ -101,6 +101,95 @@ body.sales-register-screen .pos-search-input {
     border: 0;
     border-radius: 0;
     font-size: 13px;
+}
+
+body.sales-register-screen #add_item_form .ui-autocomplete {
+    z-index: 2300;
+    width: max(100%, 370px);
+    max-width: min(480px, calc(100vw - 24px));
+    max-height: 490px;
+    padding: 0;
+    border: 1px solid #d4d9df;
+    background: #fff;
+    box-shadow: 0 8px 18px rgba(17, 24, 39, 0.16);
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+body.sales-register-screen #add_item_form .ui-menu-item,
+body.sales-register-screen #add_item_form .ui-menu-item-wrapper {
+    max-width: 100%;
+}
+
+body.sales-register-screen #add_item_form .ui-menu-item-wrapper {
+    padding: 0;
+    border: 0;
+}
+
+body.sales-register-screen #add_item_form .ui-menu-item-wrapper.ui-state-active,
+body.sales-register-screen #add_item_form .ui-menu-item-wrapper.ui-state-focus {
+    margin: 0;
+    border: 0;
+    background: #0879bd;
+    color: #fff;
+}
+
+body.sales-register-screen .cashier-search-suggestion {
+    min-height: 48px;
+    padding: 8px 10px;
+    border-bottom: 1px dashed #dfe4ea;
+    box-sizing: border-box;
+}
+
+body.sales-register-screen #add_item_form .ui-menu-item:last-child .cashier-search-suggestion {
+    border-bottom: 0;
+}
+
+body.sales-register-screen .cashier-search-suggestion__name {
+    display: block;
+    color: #1f2d3d;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 18px;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+body.sales-register-screen .cashier-search-suggestion__meta {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    margin-top: 3px;
+    color: #52606d;
+    font-size: 11px;
+    line-height: 14px;
+}
+
+body.sales-register-screen .cashier-search-suggestion__barcode {
+    min-width: 0;
+    font-size: 11px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+body.sales-register-screen .cashier-search-suggestion__price {
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+body.sales-register-screen #add_item_form .ui-state-active .cashier-search-suggestion__name,
+body.sales-register-screen #add_item_form .ui-state-active .cashier-search-suggestion__meta,
+body.sales-register-screen #add_item_form .ui-state-active .cashier-search-suggestion__barcode,
+body.sales-register-screen #add_item_form .ui-state-active .cashier-search-suggestion__price,
+body.sales-register-screen #add_item_form .ui-state-focus .cashier-search-suggestion__name,
+body.sales-register-screen #add_item_form .ui-state-focus .cashier-search-suggestion__meta,
+body.sales-register-screen #add_item_form .ui-state-focus .cashier-search-suggestion__barcode,
+body.sales-register-screen #add_item_form .ui-state-focus .cashier-search-suggestion__price {
+    color: #fff;
 }
 
 body.sales-register-screen .pos-order-tab {
@@ -253,8 +342,8 @@ body.sales-register-screen .cashier-cart-row {
     align-items: center;
     gap: 0;
     width: 100%;
-    min-height: 48px;
-    max-height: 54px;
+    min-height: 54px;
+    max-height: 72px;
     margin: 0;
     border-bottom: 1px solid #e4edf4;
     background: #eef8ff;
@@ -270,6 +359,9 @@ body.sales-register-screen .pos-cart-header {
     color: #000;
     font-size: 11px;
     font-weight: 800;
+    letter-spacing: 0;
+    line-height: 16px;
+    overflow: visible;
     text-transform: uppercase;
 }
 
@@ -298,42 +390,73 @@ body.sales-register-screen .cashier-cart-cell button {
 }
 
 body.sales-register-screen .cashier-cart-cell.code {
-    justify-content: flex-start;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    grid-column: 1;
+    align-items: center;
+    justify-content: stretch;
+    overflow: visible;
+    text-overflow: clip;
+}
+
+body.sales-register-screen .pos-cart-header .cashier-cart-cell {
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    text-align: center;
+}
+
+body.sales-register-screen .pos-cart-header .cashier-cart-cell.code {
+    align-items: flex-start;
+    justify-content: center;
+    padding-left: 20px;
+    text-align: left;
 }
 
 body.sales-register-screen .cashier-cart-cell.name {
+    grid-column: 2;
+    display: block;
     justify-content: flex-start;
+    overflow: hidden;
 }
 
-body.sales-register-screen .cashier-cart-cell.unit-price,
-body.sales-register-screen .cashier-cart-cell.total {
+body.sales-register-screen .cashier-cart-cell.unit-price {
+    grid-column: 3;
     justify-content: flex-end;
     text-align: right;
 }
 
-body.sales-register-screen .cashier-cart-cell.quantity,
-body.sales-register-screen .cashier-cart-cell.discount,
-body.sales-register-screen .cashier-cart-cell.delete {
+body.sales-register-screen .cashier-cart-cell.quantity {
+    grid-column: 4;
     justify-content: center;
 }
 
-body.sales-register-screen .cashier-cart-cell.delete {
+body.sales-register-screen .cashier-cart-cell.total {
+    grid-column: 5;
     justify-content: flex-end;
-    padding-right: 8px;
+    text-align: right;
+}
+
+body.sales-register-screen .cashier-cart-cell.pos-cart-delete {
+    grid-column: 6;
+    justify-content: center;
+}
+
+body.sales-register-screen .cashier-cart-cell.pos-cart-delete {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding-right: 0;
+    text-align: center;
 }
 
 body.sales-register-screen .cashier-cart-cell.unit-price,
 body.sales-register-screen .cashier-cart-cell.quantity,
-body.sales-register-screen .cashier-cart-cell.discount,
 body.sales-register-screen .cashier-cart-cell.total,
-body.sales-register-screen .cashier-cart-cell.delete {
+body.sales-register-screen .cashier-cart-cell.pos-cart-delete {
     white-space: nowrap;
 }
 
 body.sales-register-screen .pos-cart-price .form-control,
-body.sales-register-screen .pos-cart-discount .form-control,
 body.sales-register-screen .pos-cart-total .form-control {
     height: 28px;
     padding: 3px 5px;
@@ -341,37 +464,6 @@ body.sales-register-screen .pos-cart-total .form-control {
     text-align: right;
     font-size: 12px;
     line-height: 20px;
-}
-
-body.sales-register-screen .pos-cart-discount .input-group {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 36px;
-    align-items: center;
-    width: 100%;
-    min-width: 0;
-}
-
-body.sales-register-screen .pos-cart-discount .input-group-btn {
-    display: block;
-    width: 36px;
-}
-
-body.sales-register-screen .pos-cart-discount .toggle {
-    width: 36px !important;
-    min-width: 36px !important;
-    height: 28px !important;
-    min-height: 28px;
-    margin: 0;
-    line-height: 20px;
-}
-
-body.sales-register-screen .pos-cart-discount .toggle .toggle-group,
-body.sales-register-screen .pos-cart-discount .toggle .btn {
-    height: 28px;
-    min-height: 28px;
-    padding-top: 3px;
-    padding-bottom: 3px;
-    font-size: 10px;
 }
 
 body.sales-register-screen .pos-item-title {
@@ -382,6 +474,89 @@ body.sales-register-screen .pos-item-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+body.sales-register-screen .pos-item-code {
+    display: block;
+    max-width: 100%;
+    min-width: 0;
+    overflow: visible;
+    color: #1f2933;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.25;
+    direction: ltr;
+    text-overflow: clip;
+    unicode-bidi: plaintext;
+    white-space: nowrap;
+}
+
+body.sales-register-screen .cashier-cart-cell.pos-cart-code {
+    justify-content: stretch;
+    overflow: visible;
+    text-overflow: clip;
+}
+
+body.sales-register-screen .pos-cart-code-content {
+    display: grid;
+    grid-template-rows: auto auto;
+    align-content: center;
+    row-gap: 4px;
+    width: 100%;
+    min-width: 0;
+    padding-right: 8px;
+    padding-left: 20px;
+    overflow: visible;
+}
+
+body.sales-register-screen .cashier-unit-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    grid-row: 2;
+    max-width: 100%;
+    margin-top: 3px;
+    overflow: hidden;
+    white-space: normal;
+}
+
+body.sales-register-screen .cashier-unit-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 18px;
+    padding: 1px 6px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 14px;
+    white-space: nowrap;
+    text-transform: uppercase;
+}
+
+body.sales-register-screen .cashier-unit-badge:focus-visible {
+    outline: 2px solid #1d4ed8;
+    outline-offset: 1px;
+}
+
+body.sales-register-screen .cashier-unit-badge--active {
+    border-color: #8f1d1d;
+    background: #d33f3f;
+    color: #fff;
+    font-weight: 800;
+}
+
+body.sales-register-screen .cashier-unit-badge--inactive {
+    border-color: #b8c4cc;
+    background: #e2e8ee;
+    color: #263542;
+    cursor: pointer;
+}
+
+body.sales-register-screen .cashier-unit-badge--inactive:hover {
+    border-color: #7a8791;
+    background: #d2dbe3;
 }
 
 body.sales-register-screen .pos-item-number-input,
@@ -427,14 +602,26 @@ body.sales-register-screen .pos-serialized-qty {
     font-weight: 700;
 }
 
-body.sales-register-screen .pos-delete-line {
+body.sales-register-screen .cashier-delete-line {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
-    margin: 0 0 0 auto;
-    color: #0b77b7;
+    width: 30px;
+    height: 30px;
+    margin: 0;
+    border: 1px solid #d9b8b8;
+    border-radius: 4px;
+    background: #fff1f1;
+    color: #c62828;
+    font-size: 13px;
+}
+
+body.sales-register-screen .cashier-delete-line:hover,
+body.sales-register-screen .cashier-delete-line:focus {
+    border-color: #c62828;
+    background: #d33f3f;
+    color: #fff;
+    text-decoration: none;
 }
 
 body.sales-register-screen .pos-cart-detail-row {
@@ -658,13 +845,11 @@ body.sales-register-screen .pos-new-customer-button {
 }
 
 body.sales-register-screen #sale_totals,
-body.sales-register-screen #payment_totals,
 body.sales-register-screen .pos-payment-entry {
     border: 0;
 }
 
 body.sales-register-screen #sale_totals th,
-body.sales-register-screen #payment_totals th,
 body.sales-register-screen .pos-payment-entry td {
     display: grid;
     align-items: center;
@@ -677,14 +862,12 @@ body.sales-register-screen .pos-payment-entry td {
 }
 
 body.sales-register-screen #sale_totals th:first-child,
-body.sales-register-screen #payment_totals th:first-child,
 body.sales-register-screen .pos-payment-entry td:first-child {
     width: 48%;
     padding-left: 0;
 }
 
 body.sales-register-screen #sale_totals th:last-child,
-body.sales-register-screen #payment_totals th:last-child,
 body.sales-register-screen .pos-payment-entry td:last-child {
     text-align: right;
 }
@@ -706,17 +889,30 @@ body.sales-register-screen .pos-muted-total th {
     font-weight: 500 !important;
 }
 
-body.sales-register-screen .pos-grand-total th {
-    height: 34px !important;
-    color: #111;
-    font-size: 12px;
-    font-weight: 500 !important;
+body.sales-register-screen #sale_totals .cashier-grand-total-row > th {
+    height: 46px !important;
+    border-top: 1px solid #ffd1d1;
+    border-bottom: 1px solid #ffd1d1;
+    background: #fff7f7;
+    color: #d32f2f !important;
+    font-size: 18px;
+    font-weight: 900 !important;
+    letter-spacing: 0;
+    line-height: 22px;
+    text-transform: uppercase;
 }
 
-body.sales-register-screen .pos-grand-total th:last-child {
-    color: #ff3b30;
-    font-size: 16px;
+body.sales-register-screen #sale_totals .cashier-grand-total-label,
+body.sales-register-screen #sale_totals .cashier-grand-total-value,
+body.sales-register-screen #sale_totals .cashier-grand-total-value #sale_total {
+    color: #d32f2f !important;
     font-weight: 900 !important;
+}
+
+body.sales-register-screen #sale_totals .cashier-grand-total-value,
+body.sales-register-screen #sale_totals .cashier-grand-total-value #sale_total {
+    font-size: 22px;
+    line-height: 24px;
 }
 
 body.sales-register-screen #payment_details {
@@ -733,15 +929,6 @@ body.sales-register-screen .pos-payment-entry {
     margin-top: 0;
 }
 
-body.sales-register-screen .pos-payment-title {
-    display: block;
-    height: 28px;
-    padding: 6px 8px;
-    background: #c9c9c9;
-    color: #111;
-    font-weight: 800;
-}
-
 body.sales-register-screen .pos-payment-entry tbody,
 body.sales-register-screen .pos-payment-entry tr,
 body.sales-register-screen .pos-payment-entry td {
@@ -752,6 +939,13 @@ body.sales-register-screen .pos-payment-entry tr {
     display: grid;
     grid-template-columns: 42% 58%;
     align-items: center;
+}
+
+body.sales-register-screen .pos-amount-tendered-row td,
+body.sales-register-screen .pos-change-row td {
+    height: 36px;
+    font-size: 13px;
+    font-weight: 800;
 }
 
 body.sales-register-screen .pos-payment-entry .bootstrap-select,

@@ -47,10 +47,12 @@
 
 use App\Models\Employee;
 
+$register_css_version = is_file(FCPATH . 'css/register.css') ? filemtime(FCPATH . 'css/register.css') : time();
+
 ?>
 
 <?= view('partial/header') ?>
-<link rel="stylesheet" href="<?= base_url('css/register.css') ?>">
+<link rel="stylesheet" href="<?= base_url('css/register.css?v=' . $register_css_version) ?>">
 <script>
     document.body.classList.add('sales-register-screen');
 </script>
@@ -187,9 +189,8 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
             <div class="cashier-cart-cell name pos-cart-name">Tên hàng hóa</div>
             <div class="cashier-cart-cell unit-price pos-cart-price">Đơn giá</div>
             <div class="cashier-cart-cell quantity pos-cart-quantity">SL</div>
-            <div class="cashier-cart-cell discount pos-cart-discount">Giảm giá</div>
             <div class="cashier-cart-cell total pos-cart-total">Thành tiền</div>
-            <div class="cashier-cart-cell delete pos-cart-action"></div>
+            <div class="cashier-cart-cell pos-cart-delete">Xóa</div>
         </div>
 
         <div id="cart_contents" class="cashier-cart-body">
@@ -204,9 +205,9 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                 foreach (array_reverse($cart, true) as $line => $item) {
                     $cart_form_id = "cart_$line";
             ?>
-                    <?= form_open("$controller_name/editItem/$line", ['class' => 'cashier-cart-row-form', 'id' => $cart_form_id]) ?>
+                    <?= form_open("$controller_name/editItem/$line", ['class' => 'cashier-cart-row-form', 'id' => $cart_form_id, 'data-line' => $line]) ?>
                     <?= form_close() ?>
-                    <div class="cashier-cart-row pos-cart-row" data-cart-form="<?= esc($cart_form_id) ?>">
+                    <div class="cashier-cart-row pos-cart-row" data-line="<?= esc($line) ?>" data-cart-form="<?= esc($cart_form_id) ?>">
                             <?php if ($item['item_type'] == ITEM_TEMP) { ?>
                                 <div class="cashier-cart-cell code pos-cart-code">
                                     <?= form_input(['name' => 'item_number', 'id' => "item_number_$line", 'class' => 'form-control input-sm pos-item-number-input', 'value' => $item['item_number'], 'tabindex' => ++$tabindex, 'form' => $cart_form_id]) ?>
@@ -217,7 +218,12 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                                     <?= form_input(['type' => 'hidden', 'name' => 'serialnumber', 'value' => $item['serialnumber'] ?? '', 'form' => $cart_form_id]) ?>
                                 </div>
                             <?php } else { ?>
-                                <div class="cashier-cart-cell code pos-cart-code"><?= esc($item['item_number']) ?></div>
+                                <div class="cashier-cart-cell code pos-cart-code">
+                                    <div class="pos-cart-code-content">
+                                        <div class="pos-item-code"><?= esc($item['item_number']) ?></div>
+                                        <?= view('sales/unit_selector', ['item' => $item, 'line' => $line]) ?>
+                                    </div>
+                                </div>
                                 <div class="cashier-cart-cell name pos-cart-name">
                                     <div class="pos-item-title"><?= esc($item['name']) . ' ' . esc(implode(' ', [$item['attribute_values'], $item['attribute_dtvalues']])) ?></div>
                                     <?= form_input(['type' => 'hidden', 'name' => 'description', 'value' => $item['description'], 'form' => $cart_form_id]) ?>
@@ -257,16 +263,6 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                                 ?>
                             </div>
 
-                            <div class="cashier-cart-cell discount pos-cart-discount">
-                                <?= form_input(['type' => 'hidden', 'name' => 'discount_type', 'class' => 'pos-discount-type-value', 'value' => $item['discount_type'] ? 1 : 0, 'form' => $cart_form_id]) ?>
-                                <div class="input-group">
-                                    <?= form_input(['name' => 'discount', 'class' => 'form-control input-sm', 'value' => $item['discount_type'] ? to_currency_no_money($item['discount']) : to_decimals($item['discount']), 'tabindex' => ++$tabindex, 'onClick' => 'this.select();', 'form' => $cart_form_id]) ?>
-                                    <span class="input-group-btn">
-                                        <?= form_checkbox(['id' => "discount_toggle_$line", 'name' => 'discount_toggle', 'value' => 1, 'data-toggle' => "toggle", 'data-size' => 'small', 'data-onstyle' => 'success', 'data-on' => '<b>' . currency_symbol() . '</b>', 'data-off' => '<b>%</b>', 'data-line' => $line, 'checked' => $item['discount_type'] == 1]) ?>
-                                    </span>
-                                </div>
-                            </div>
-
                             <div class="cashier-cart-cell total pos-cart-total">
                                 <?php
                                 if ($item['item_type'] == ITEM_AMOUNT_ENTRY) {    // TODO: === ?
@@ -277,8 +273,16 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                                 ?>
                             </div>
 
-                            <div class="cashier-cart-cell delete pos-cart-action">
-                                <?= anchor("$controller_name/deleteItem/$line", '<span class="glyphicon glyphicon-trash"></span>', ['class' => 'pos-delete-line', 'title' => lang('Common.delete')]) ?>
+                            <div class="cashier-cart-cell pos-cart-delete">
+                                <button
+                                    type="button"
+                                    class="cashier-delete-line"
+                                    data-line="<?= esc($line) ?>"
+                                    title="Xóa sản phẩm khỏi đơn hàng"
+                                    aria-label="Xóa sản phẩm khỏi đơn hàng">
+                                    <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+                                    <span class="sr-only">Xóa sản phẩm khỏi đơn hàng</span>
+                                </button>
                             </div>
                     </div>
             <?php
@@ -380,12 +384,12 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                 </th>
             </tr>
             <tr class="pos-muted-total">
-                <th><?= lang(ucfirst($controller_name) . '.quantity_of_items', [$item_count]) ?></th>
-                <th><?= $total_units ?></th>
+                <th id="sale_item_count_label"><?= lang(ucfirst($controller_name) . '.quantity_of_items', [$item_count]) ?></th>
+                <th id="sale_total_units"><?= $total_units ?></th>
             </tr>
             <tr>
                 <th>Tổng thành tiền</th>
-                <th><?= to_currency($subtotal) ?></th>
+                <th id="sale_subtotal"><?= to_currency($subtotal) ?></th>
             </tr>
             <tr>
                 <th><?= isset($customer) ? 'Điểm hiện có' : 'Điểm thưởng' ?></th>
@@ -401,37 +405,20 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                     <th><?= to_currency_tax($tax['sale_tax_amount']) ?></th>
                 </tr>
             <?php } ?>
-            <tr class="pos-grand-total">
-                <th>Tổng cộng</th>
-                <th><span id="sale_total"><?= to_currency($total) ?></span></th>
+            <tr class="pos-grand-total cashier-grand-total-row">
+                <th class="cashier-grand-total-label">TỔNG CỘNG</th>
+                <th class="cashier-grand-total-value"><span id="sale_total"><?= to_currency($total) ?></span></th>
             </tr>
         </table>
 
         <?php if (count($cart) > 0) { // Only show this part if there are Items already in the register ?>
-            <table class="sales_table_100 pos-side-section" id="payment_totals">
-                <tr>
-                    <th>Đã thanh toán</th>
-                    <th><?= to_currency($payments_total) ?></th>
-                </tr>
-                <tr>
-                    <th>Số còn lại phải thanh toán</th>
-                    <th><span id="sale_amount_due"><?= to_currency($amount_due) ?></span></th>
-                </tr>
-            </table>
-
             <div id="payment_details">
-                <div class="pos-payment-title">THANH TOÁN</div>
+                <span id="sale_amount_due" class="sr-only"><?= to_currency($amount_due) ?></span>
                 <?php if ($payments_cover_total) { // Show Complete sale button instead of Add Payment if there is no amount due left ?>
                     <?= form_open("$controller_name/addPayment", ['id' => 'add_payment_form', 'class' => 'form-horizontal']) ?>
                         <input type="hidden" name="complete_after_payment" value="0">
                         <table class="sales_table_100 pos-payment-entry">
-                            <tr>
-                                <td>Hình thức</td>
-                                <td>
-                                    <?= form_dropdown('payment_type', $register_payment_options, $register_selected_payment_type, ['id' => 'payment_types', 'class' => 'selectpicker show-menu-arrow', 'data-style' => 'btn-default btn-sm', 'data-width' => '100%', 'disabled' => 'disabled']) ?>
-                                </td>
-                            </tr>
-                            <tr>
+                            <tr class="pos-amount-tendered-row">
                                 <td><span id="amount_tendered_label">Tiền khách đưa</span></td>
                                 <td>
                                     <?= form_input([
@@ -461,6 +448,12 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                                         <button type="button" class="btn btn-default btn-xs pos-cash-shortcut" data-amount="200000">200.000</button>
                                         <button type="button" class="btn btn-default btn-xs pos-cash-shortcut" data-amount="500000">500.000</button>
                                     </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Hình thức</td>
+                                <td>
+                                    <?= form_dropdown('payment_type', $register_payment_options, $register_selected_payment_type, ['id' => 'payment_types', 'class' => 'selectpicker show-menu-arrow', 'data-style' => 'btn-default btn-sm', 'data-width' => '100%', 'disabled' => 'disabled']) ?>
                                 </td>
                             </tr>
                             <tr class="pos-change-row">
@@ -514,13 +507,7 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                     <?= form_open("$controller_name/addPayment", ['id' => 'add_payment_form', 'class' => 'form-horizontal']) ?>
                         <input type="hidden" name="complete_after_payment" value="0">
                         <table class="sales_table_100 pos-payment-entry">
-                            <tr>
-                                <td>Hình thức</td>
-                                <td>
-                                    <?= form_dropdown('payment_type', $register_payment_options, $register_selected_payment_type, ['id' => 'payment_types', 'class' => 'selectpicker show-menu-arrow', 'data-style' => 'btn-default btn-sm', 'data-width' => '100%']) ?>
-                                </td>
-                            </tr>
-                            <tr>
+                            <tr class="pos-amount-tendered-row">
                                 <td><span id="amount_tendered_label">Tiền khách đưa</span></td>
                                 <td>
                                     <?= form_input(['name' => 'amount_tendered', 'id' => 'amount_tendered', 'class' => 'form-control input-sm non-giftcard-input', 'value' => $active_order_amount_tendered ?? to_currency_no_money($amount_due), 'size' => '5', 'tabindex' => ++$tabindex, 'onClick' => 'this.select();']) ?>
@@ -542,6 +529,12 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
                                         <button type="button" class="btn btn-default btn-xs pos-cash-shortcut" data-amount="200000">200.000</button>
                                         <button type="button" class="btn btn-default btn-xs pos-cash-shortcut" data-amount="500000">500.000</button>
                                     </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Hình thức</td>
+                                <td>
+                                    <?= form_dropdown('payment_type', $register_payment_options, $register_selected_payment_type, ['id' => 'payment_types', 'class' => 'selectpicker show-menu-arrow', 'data-style' => 'btn-default btn-sm', 'data-width' => '100%']) ?>
                                 </td>
                             </tr>
                             <tr class="pos-change-row">
@@ -714,9 +707,77 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
             $.post("<?= site_url('sales/removeCustomer'); ?>", redirect);
         });
 
-        $(".delete_item_button").click(function() {
-            const line = $(this).data('line');
-            $.post("<?= site_url('sales/deleteItem/'); ?>" + line, redirect);
+        function renderEmptyCartRow() {
+            return '<div class="pos-cart-empty-row">'
+                + '<div class="cashier-cart-cell pos-cart-empty-cell">'
+                + '<div class="alert alert-dismissible alert-info pos-empty-cart">Chưa có sản phẩm trong hóa đơn</div>'
+                + '</div>'
+                + '</div>';
+        }
+
+        function applyCartTotals(totals) {
+            if (!totals) {
+                return;
+            }
+
+            $('#sale_item_count_label').text(totals.item_count_label);
+            $('#sale_total_units').text(totals.total_units);
+            $('#sale_subtotal').text(totals.subtotal);
+            $('#sale_total').text(totals.total);
+            $('#sale_amount_due').text(totals.amount_due);
+            $('#pos_change_due').text(totals.change_due);
+            $('[name="amount_tendered"]:enabled').val(totals.amount_due_raw);
+            $('.pos-payment-list').remove();
+
+            if (!totals.payments_cover_total) {
+                $('#payment_types').prop('disabled', false).selectpicker('refresh');
+                $('.non-giftcard-input[name="amount_tendered"]').prop('disabled', false).removeClass('disabled').val(totals.amount_due_raw);
+                $('#cashier-complete-sale').removeClass('disabled');
+            }
+        }
+
+        $(document).on('click', '.cashier-delete-line', function(event) {
+            event.preventDefault();
+
+            const $button = $(this);
+            const line = $button.data('line');
+
+            $button.prop('disabled', true);
+
+            $.ajax({
+                url: "<?= site_url('sales/deleteItem/'); ?>" + line,
+                type: 'post',
+                dataType: 'json',
+                success: function(response) {
+                    if (!response || !response.success) {
+                        showRegisterPrintError((response && response.message) || 'Không thể xóa sản phẩm khỏi đơn hàng.');
+                        $button.prop('disabled', false);
+                        focusItemSearch(false);
+                        return;
+                    }
+
+                    const $row = $('.cashier-cart-row[data-line="' + response.line + '"]');
+                    const cartForm = $row.data('cart-form');
+                    if (cartForm) {
+                        $('#' + cartForm).remove();
+                    }
+                    $row.remove();
+
+                    if (response.cart_empty) {
+                        $('#cart_contents').html(renderEmptyCartRow());
+                        $('#payment_details').remove();
+                    }
+
+                    applyCartTotals(response.totals);
+                    focusItemSearch(false);
+                },
+                error: function(xhr) {
+                    const response = xhr.responseJSON || {};
+                    showRegisterPrintError(response.message || 'Không thể xóa sản phẩm khỏi đơn hàng.');
+                    $button.prop('disabled', false);
+                    focusItemSearch(false);
+                }
+            });
         });
 
         $(".delete_payment_button").click(function() {
@@ -766,7 +827,15 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
             });
         });
 
-        $('#item').focus();
+        function focusItemSearch(selectText) {
+            const $itemInput = $('#item');
+            $itemInput.focus();
+            if (selectText) {
+                $itemInput.select();
+            }
+        }
+
+        focusItemSearch(false);
 
         $('#item').blur(function() {
             if ($(this).val() == '') {
@@ -774,21 +843,112 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
             }
         });
 
-        $('#item').autocomplete({
-            source: "<?= esc("$controller_name/itemSearch") ?>",
-            minChars: 0,
+        const itemAutocomplete = $('#item').autocomplete({
+            source: function(request, response) {
+                $.getJSON("<?= site_url("$controller_name/itemSearch") ?>", {
+                    term: $.trim(request.term)
+                }, response);
+            },
+            minLength: 1,
+            minChars: 1,
             autoFocus: false,
-            delay: 500,
+            delay: 0,
+            appendTo: '#add_item_form',
             select: function(a, ui) {
                 $(this).val(ui.item.value);
                 $('#add_item_form').submit();
                 return false;
             }
+        }).data('ui-autocomplete');
+
+        if (itemAutocomplete) {
+            itemAutocomplete._renderItem = function(ul, item) {
+                const $suggestion = $('<div>', {
+                    class: 'cashier-search-suggestion'
+                });
+
+                $('<div>', {
+                    class: 'cashier-search-suggestion__name',
+                    text: item.name || item.label || ''
+                }).appendTo($suggestion);
+
+                const $meta = $('<div>', {
+                    class: 'cashier-search-suggestion__meta'
+                }).appendTo($suggestion);
+
+                const barcode = item.barcode || '';
+                const formattedPrice = item.formatted_price || '';
+
+                $('<span>', {
+                    class: 'cashier-search-suggestion__barcode',
+                    text: barcode
+                }).appendTo($meta);
+
+                if (barcode !== '' && formattedPrice !== '') {
+                    $('<span>', {
+                        class: 'cashier-search-suggestion__separator',
+                        text: '·'
+                    }).appendTo($meta);
+                }
+
+                $('<span>', {
+                    class: 'cashier-search-suggestion__price',
+                    text: formattedPrice
+                }).appendTo($meta);
+
+                return $('<li>').append($suggestion).appendTo(ul);
+            };
+        }
+
+        $('#item').on('input', function() {
+            const searchValue = $.trim($(this).val());
+            if (searchValue.length > 0) {
+                $(this).autocomplete('search', searchValue);
+            }
+        });
+
+        function submitScannedItem() {
+            const $itemInput = $('#item');
+            const itemValue = $.trim($itemInput.val());
+
+            if (itemValue === '') {
+                focusItemSearch(false);
+                return;
+            }
+
+            $itemInput.val(itemValue);
+
+            $.ajax({
+                url: "<?= site_url("$controller_name/add") ?>",
+                type: 'post',
+                dataType: 'json',
+                data: $('#add_item_form').serialize(),
+                success: function(response) {
+                    if (response && response.success) {
+                        $itemInput.val('');
+                        window.location.href = "<?= site_url($controller_name) ?>";
+                        return;
+                    }
+
+                    showRegisterPrintError((response && response.message) || 'Mã hàng hóa này chưa tồn tại trên hệ thống.');
+                    focusItemSearch(true);
+                },
+                error: function() {
+                    showRegisterPrintError('Mã hàng hóa này chưa tồn tại trên hệ thống.');
+                    focusItemSearch(true);
+                }
+            });
+        }
+
+        $('#add_item_form').submit(function(event) {
+            event.preventDefault();
+            submitScannedItem();
+            return false;
         });
 
         $('#item').keypress(function(e) {
             if (e.which == 13) {
-                $('#add_item_form').submit();
+                submitScannedItem();
                 return false;
             }
         });
@@ -1046,14 +1206,35 @@ $active_order_amount_tendered = $cashier_active_order['amount_tendered'] ?? null
             }
         }
 
-        $('[name="price"],[name="quantity"],[name="discount"],[name="description"],[name="serialnumber"],[name="discounted_total"]').change(function() {
+        $('[name="price"],[name="quantity"],[name="description"],[name="serialnumber"],[name="discounted_total"]').change(function() {
             submitCartInput($(this));
         });
 
-        $('[name="discount_toggle"]').change(function() {
-            const formId = 'cart_' + $(this).attr('data-line');
-            $("input.pos-discount-type-value[form='" + formId + "']").val(($(this).prop('checked')) ? 1 : 0);
-            $('#' + formId).submit();
+        $(document).on('click', '.cashier-unit-badge', function() {
+            const $button = $(this);
+            if ($button.attr('aria-pressed') === 'true') {
+                return;
+            }
+
+            $.ajax({
+                url: "<?= site_url('sales/switchItemUnit') ?>/" + encodeURIComponent($button.data('line')),
+                type: 'post',
+                dataType: 'json',
+                data: {
+                    item_unit_id: $button.data('unit-id')
+                },
+                success: function(response) {
+                    if (response && response.success) {
+                        window.location.href = "<?= site_url('sales') ?>";
+                        return;
+                    }
+
+                    showRegisterPrintError(response && response.message ? response.message : "<?= lang('Sales.unable_to_add_item') ?>");
+                },
+                error: function() {
+                    showRegisterPrintError("<?= lang('Sales.unable_to_add_item') ?>");
+                }
+            });
         });
     });
 

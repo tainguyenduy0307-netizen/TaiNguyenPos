@@ -124,6 +124,9 @@ foreach ($payments as $payment) {
             }
 
             $itemName = trim(($item['name'] ?? '') . ' ' . ($item['attribute_values'] ?? ''));
+            if (!empty($item['unit_name'])) {
+                $itemName = trim($itemName . ' - ' . $item['unit_name']);
+            }
             $lineTotalKey = $config['receipt_show_total_discount'] ? 'total' : 'discounted_total';
             $lineTotal = $item[$lineTotalKey] ?? 0;
         ?>

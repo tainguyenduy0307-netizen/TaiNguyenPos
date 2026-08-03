@@ -576,6 +576,7 @@ class Sale extends Model
         $giftcard = model(Giftcard::class);
         $inventory = model('Inventory');
         $item = model(Item::class);
+        $businessUnitItemUnitQuantity = model(Business_unit_item_unit_quantity::class);
         $businessUnitInventory = Services::businessUnitInventory();
 
         if (count($items) == 0) {    // TODO: ===
@@ -672,7 +673,11 @@ class Sale extends Model
                 'item_cost_price'    => $item_data['cost_price'],
                 'item_unit_price'    => $item_data['price'],
                 'item_location'      => $item_data['item_location'],
-                'print_option'       => $item_data['print_option']
+                'print_option'       => $item_data['print_option'],
+                'item_unit_id'       => $item_data['item_unit_id'] ?? null,
+                'unit_type'          => $item_data['unit_type'] ?? 'retail',
+                'unit_name'          => $item_data['unit_name'] ?? null,
+                'conversion_quantity'=> $item_data['conversion_quantity'] ?? 1,
             ];
 
             $builder = $this->db->table('sales_items');
@@ -680,7 +685,11 @@ class Sale extends Model
 
             if ($cur_item_info->stock_type == HAS_STOCK && $saleStatus == COMPLETED) {    // TODO: === ?
                 // Update stock quantity if item type is a standard stock item and the sale is a standard sale
-                $businessUnitInventory->changeCurrentQuantity($item_data['item_id'], $item_data['item_location'], -$item_data['quantity']);
+                if (!empty($item_data['item_unit_id'])) {
+                    $businessUnitItemUnitQuantity->changeQuantity($businessUnitId, (int) $item_data['item_unit_id'], -(float) $item_data['quantity']);
+                } else {
+                    $businessUnitInventory->changeCurrentQuantity($item_data['item_id'], $item_data['item_location'], -$item_data['quantity']);
+                }
 
                 // If an items was deleted but later returned it's restored with this rule
                 if ($item_data['quantity'] < 0) {
@@ -867,6 +876,7 @@ class Sale extends Model
             // Get array with all the items involved in the sale to update the inventory tracking
             $inventory = model('Inventory');
             $item = model(Item::class);
+            $businessUnitItemUnitQuantity = model(Business_unit_item_unit_quantity::class);
             $businessUnitInventory = Services::businessUnitInventory();
 
             $items = $this->get_sale_items($sale_id)->getResultArray();
@@ -889,7 +899,11 @@ class Sale extends Model
                     $inventory->insert($inv_data, false);
 
                     // Update quantities
-                    $businessUnitInventory->changeCurrentQuantity($item_data['item_id'], $item_data['item_location'], $item_data['quantity_purchased']);
+                    if (!empty($item_data['item_unit_id'])) {
+                        $businessUnitItemUnitQuantity->changeQuantity($businessUnitId, (int) $item_data['item_unit_id'], (float) $item_data['quantity_purchased']);
+                    } else {
+                        $businessUnitInventory->changeCurrentQuantity($item_data['item_id'], $item_data['item_location'], $item_data['quantity_purchased']);
+                    }
                 }
             }
         }
@@ -930,6 +944,10 @@ class Sale extends Model
         $builder->select('
             sales_items.sale_id,
             sales_items.item_id,
+            sales_items.item_unit_id,
+            sales_items.unit_type,
+            sales_items.unit_name,
+            sales_items.conversion_quantity,
             sales_items.description,
             serialnumber,
             line,
@@ -1218,6 +1236,10 @@ class Sale extends Model
                     MAX(sales.employee_id) AS employee_id,
                     MAX(CONCAT(employee.first_name, " ", employee.last_name)) AS employee_name,
                     items.item_id AS item_id,
+                    MAX(sales_items.item_unit_id) AS item_unit_id,
+                    MAX(sales_items.unit_type) AS unit_type,
+                    MAX(sales_items.unit_name) AS unit_name,
+                    MAX(sales_items.conversion_quantity) AS conversion_quantity,
                     MAX(' . $item->get_item_name() . ') AS name,
                     MAX(items.item_number) AS item_number,
                     MAX(items.category) AS category,

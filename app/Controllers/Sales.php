@@ -28,6 +28,8 @@ use stdClass;
 
 class Sales extends Secure_Controller
 {
+    private const UNKNOWN_BARCODE_MESSAGE = 'Mã hàng hóa này chưa tồn tại trên hệ thống.';
+
     protected $helpers = ['file'];
     private Barcode_lib $barcode_lib;
     private Email_lib $email_lib;
@@ -261,9 +263,11 @@ class Sales extends Secure_Controller
     {
         $this->requireCurrentBusinessUnitId();
         $suggestions = [];
-        $receipt = $search = $this->request->getGet('term') != ''
-            ? $this->request->getGet('term')
-            : null;
+        $receipt = $search = trim((string) $this->request->getGet('term'));
+
+        if ($search === '') {
+            return $this->response->setJSON($suggestions);
+        }
 
         if ($this->sale_lib->get_mode() == 'return' && $this->sale->isValidReceipt($receipt)) {
             // If a valid receipt or invoice was found the search term will be replaced with a receipt number (POS #)
@@ -596,6 +600,7 @@ class Sales extends Secure_Controller
     {
         $this->requireCurrentBusinessUnitId();
         $data = [];
+        $isAjaxScan = $this->request->isAJAX();
 
         $discount = $this->config['default_sales_discount'];
         $discount_type = $this->config['default_sales_discount_type'];
@@ -658,10 +663,27 @@ class Sales extends Secure_Controller
             }
         } else {
             if ($item_id_or_number_or_item_kit_or_receipt == '' || !$this->sale_lib->add_item($item_id_or_number_or_item_kit_or_receipt, $item_location, $quantity, $discount, $discount_type, PRICE_MODE_STANDARD, null, null, $price)) {
-                $data['error'] = lang('Sales.unable_to_add_item');
+                $data['error'] = $isAjaxScan ? self::UNKNOWN_BARCODE_MESSAGE : lang('Sales.unable_to_add_item');
             } else {
                 $data['warning'] = $this->sale_lib->out_of_stock($item_id_or_number_or_item_kit_or_receipt, $item_location);
             }
+        }
+
+        if ($isAjaxScan) {
+            if (isset($data['error'])) {
+                return $this->response->setJSON([
+                    'success' => false,
+                    'message' => $data['error'],
+                ]);
+            }
+
+            $this->sale_lib->saveActiveCashierOrder();
+
+            return $this->response->setJSON([
+                'success' => true,
+                'message' => '',
+                'warning' => $data['warning'] ?? '',
+            ]);
         }
 
         return $this->reload($data);
@@ -695,14 +717,18 @@ class Sales extends Secure_Controller
         ];
 
         if ($this->validate($rules, $messages)) {
+            $cart = $this->sale_lib->get_cart();
+            $currentLine = $cart[$line] ?? [];
             $description = $this->request->getPost('description', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
             $serialnumber = $this->request->getPost('serialnumber', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
             $price = parse_decimals($this->request->getPost('price'));
             $quantity = parse_decimals($this->request->getPost('quantity'));
             $discount_type = $this->request->getPost('discount_type', FILTER_SANITIZE_FULL_SPECIAL_CHARS);
-            $discount = $discount_type
-                ? parse_quantity($this->request->getPost('discount'))
-                : parse_decimals($this->request->getPost('discount'));
+            $discount_type = $discount_type !== null ? $discount_type : ($currentLine['discount_type'] ?? PERCENT);
+            $discountInput = $this->request->getPost('discount');
+            $discount = $discountInput !== null
+                ? ($discount_type ? parse_quantity($discountInput) : parse_decimals($discountInput))
+                : ($currentLine['discount'] ?? 0);
             $discount = $discount ?: 0;
 
             // Return mode legitimately uses negative quantities for refunds
@@ -741,23 +767,88 @@ class Sales extends Secure_Controller
         return $this->reload($data);
     }
 
+    public function postSwitchItemUnit(string $line): ResponseInterface|string
+    {
+        $this->requireCurrentBusinessUnitId();
+        $itemUnitId = (int) $this->request->getPost('item_unit_id', FILTER_SANITIZE_NUMBER_INT);
+
+        if ($itemUnitId <= 0 || !$this->sale_lib->switch_item_unit((int) $line, $itemUnitId)) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => lang('Sales.unable_to_add_item'),
+            ]);
+        }
+
+        $this->sale_lib->saveActiveCashierOrder();
+
+        return $this->response->setJSON([
+            'success' => true,
+            'message' => '',
+        ]);
+    }
+
     /**
-     * Deletes an item specified in the parameter from the shopping cart. Used in app/Views/sales/register.php
+     * Deletes an item specified in the parameter from the active shopping cart.
      *
      * @param int $line
      * @return ResponseInterface
-     * @throws ReflectionException
      * @noinspection PhpUnused
      */
-    public function getDeleteItem(int $line): ResponseInterface|string
+    public function postDeleteItem(int $line): ResponseInterface
     {
         $this->requireCurrentBusinessUnitId();
 
-        if ($this->sale_lib->delete_item($line)) {
-            $this->sale_lib->empty_payments();
+        if (!$this->sale_lib->delete_item($line, false)) {
+            return $this->response
+                ->setStatusCode(404)
+                ->setJSON([
+                    'success' => false,
+                    'message' => 'Dòng sản phẩm không tồn tại trong đơn hàng.',
+                ]);
         }
 
-        return $this->reload();
+        $this->sale_lib->empty_payments();
+        $this->sale_lib->saveActiveCashierOrder();
+        $cart = $this->sale_lib->get_cart();
+
+        return $this->response->setJSON([
+            'success' => true,
+            'line' => $line,
+            'cart_empty' => count($cart) === 0,
+            'totals' => $this->buildRegisterTotalsForAjax($cart),
+        ]);
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $cart
+     * @return array<string, bool|string>
+     */
+    private function buildRegisterTotalsForAjax(array $cart): array
+    {
+        $taxDetails = $this->tax_lib->get_taxes($cart);
+        $totals = $this->sale_lib->get_totals($taxDetails[0]);
+        $cashMode = $this->session->get('cash_mode');
+        $selectedPaymentType = $this->sale_lib->get_payment_type();
+
+        if ($cashMode && ($selectedPaymentType == lang('Sales.cash') || $totals['payment_total'] > 0)) {
+            $displayTotal = $totals['cash_total'];
+            $displayAmountDue = $totals['cash_amount_due'];
+        } else {
+            $displayTotal = $totals['total'];
+            $displayAmountDue = $totals['amount_due'];
+        }
+
+        return [
+            'item_count_label' => lang('Sales.quantity_of_items', [$totals['item_count']]),
+            'total_units' => to_quantity_decimals($totals['total_units']),
+            'subtotal' => to_currency($totals['subtotal']),
+            'payments_total' => to_currency($totals['payment_total']),
+            'total' => to_currency($displayTotal),
+            'amount_due' => to_currency($displayAmountDue),
+            'amount_due_raw' => to_currency_no_money($displayAmountDue),
+            'change_due' => to_currency(abs(min(0, (float) $displayAmountDue))),
+            'payments_cover_total' => (bool) $totals['payments_cover_total'],
+        ];
     }
 
     /**

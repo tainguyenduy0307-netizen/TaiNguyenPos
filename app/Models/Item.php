@@ -5,6 +5,7 @@ namespace App\Models;
 use CodeIgniter\Database\ResultInterface;
 use CodeIgniter\Model;
 use Config\OSPOS;
+use Config\Services;
 use ReflectionException;
 use stdClass;
 
@@ -98,7 +99,21 @@ class Item extends Model
         if (ctype_digit($item_id) && !str_starts_with($item_id, '0')) {
             $builder->where('item_id !=', intval($item_id));
         }
-        return ($builder->get()->getNumRows()) >= 1;
+        if (($builder->get()->getNumRows()) >= 1) {
+            return true;
+        }
+
+        if ($this->db->tableExists('item_barcodes')) {
+            $builder = $this->db->table('item_barcodes');
+            $builder->join('items', 'items.item_id = item_barcodes.item_id');
+            $builder->where('item_barcodes.barcode', $item_number);
+            $builder->where('item_barcodes.item_id !=', intval($item_id));
+            $builder->where('items.deleted !=', 1);
+
+            return ($builder->get()->getNumRows()) >= 1;
+        }
+
+        return false;
     }
 
     /**
@@ -155,28 +170,39 @@ class Item extends Model
         }
 
         $config = config(OSPOS::class)->settings;
-        $builder = $this->db->table('items AS items');    // TODO: I'm not sure if it's needed to write items AS items... I think you can just get away with items
+        $builder = $this->db->table('items');
+        $itemsTable = $this->db->prefixTable('items');
+        $itemField = static fn (string $field): string => $itemsTable . '.' . $field;
+        $businessUnitId = $this->getCurrentBusinessUnitId();
+        $hasUnitQuantityTables = $businessUnitId !== null
+            && $this->db->tableExists('item_units')
+            && $this->db->tableExists('business_unit_item_unit_quantities');
+
+        $legacyQuantitySql = $this->buildLegacyQuantitySubquery((int) $filters['stock_location_id']);
+        $quantityExpression = $hasUnitQuantityTables
+            ? 'COALESCE(unit_quantities.retail_quantity, item_quantities.quantity, 0)'
+            : 'COALESCE(item_quantities.quantity, 0)';
 
         // get_found_rows case
         if ($count_only) {
-            $builder->select('COUNT(DISTINCT items.item_id) AS count');
+            $builder->select('COUNT(DISTINCT ' . $itemField('item_id') . ') AS count');
         } else {
-            $builder->select('MAX(items.item_id) AS item_id');
-            $builder->select('MAX(items.name) AS name');
-            $builder->select('MAX(items.category) AS category');
-            $builder->select('MAX(items.supplier_id) AS supplier_id');
-            $builder->select('MAX(items.item_number) AS item_number');
-            $builder->select('MAX(items.description) AS description');
-            $builder->select('MAX(items.cost_price) AS cost_price');
-            $builder->select('MAX(items.unit_price) AS unit_price');
-            $builder->select('MAX(items.reorder_level) AS reorder_level');
-            $builder->select('MAX(items.receiving_quantity) AS receiving_quantity');
-            $builder->select('MAX(items.pic_filename) AS pic_filename');
-            $builder->select('MAX(items.allow_alt_description) AS allow_alt_description');
-            $builder->select('MAX(items.is_serialized) AS is_serialized');
-            $builder->select('MAX(items.pack_name) AS pack_name');
-            $builder->select('MAX(items.tax_category_id) AS tax_category_id');
-            $builder->select('MAX(items.deleted) AS deleted');
+            $builder->select('MAX(' . $itemField('item_id') . ') AS item_id');
+            $builder->select('MAX(' . $itemField('name') . ') AS name');
+            $builder->select('MAX(' . $itemField('category') . ') AS category');
+            $builder->select('MAX(' . $itemField('supplier_id') . ') AS supplier_id');
+            $builder->select('MAX(' . $itemField('item_number') . ') AS item_number');
+            $builder->select('MAX(' . $itemField('description') . ') AS description');
+            $builder->select('MAX(' . $itemField('cost_price') . ') AS cost_price');
+            $builder->select('MAX(' . $itemField('unit_price') . ') AS unit_price');
+            $builder->select('MAX(' . $itemField('reorder_level') . ') AS reorder_level');
+            $builder->select('MAX(' . $itemField('receiving_quantity') . ') AS receiving_quantity');
+            $builder->select('MAX(' . $itemField('pic_filename') . ') AS pic_filename');
+            $builder->select('MAX(' . $itemField('allow_alt_description') . ') AS allow_alt_description');
+            $builder->select('MAX(' . $itemField('is_serialized') . ') AS is_serialized');
+            $builder->select('MAX(' . $itemField('pack_name') . ') AS pack_name');
+            $builder->select('MAX(' . $itemField('tax_category_id') . ') AS tax_category_id');
+            $builder->select('MAX(' . $itemField('deleted') . ') AS deleted');
 
             $builder->select('MAX(suppliers.person_id) AS person_id');
             $builder->select('MAX(suppliers.company_name) AS company_name');
@@ -191,26 +217,44 @@ class Item extends Model
             $builder->select('MAX(inventory.trans_comment) AS trans_comment');
             $builder->select('MAX(inventory.trans_location) AS trans_location');
             $builder->select('MAX(inventory.trans_inventory) AS trans_inventory');
-
-            if ($filters['stock_location_id'] > -1) {
-                $builder->select('MAX(item_quantities.item_id) AS qty_item_id');
-                $builder->select('MAX(item_quantities.location_id) AS location_id');
-                $builder->select('MAX(item_quantities.quantity) AS quantity');
-            }
+            $builder->select('MAX(item_quantities.item_id) AS qty_item_id');
+            $builder->select('MAX(item_quantities.location_id) AS location_id');
+            $builder->select('MAX(' . $quantityExpression . ') AS quantity', false);
+            $builder->select('MAX(unit_quantities.large_quantity) AS large_quantity');
+            $builder->select('MAX(unit_quantities.retail_unit_name) AS retail_unit_name');
+            $builder->select('MAX(unit_quantities.large_unit_name) AS large_unit_name');
         }
 
         $builder->join('suppliers AS suppliers', 'suppliers.person_id = items.supplier_id', 'left');
-        $builder->join('inventory AS inventory', 'inventory.trans_items = items.item_id');
-
-        if ($filters['stock_location_id'] > -1) {
-            $builder->join('item_quantities AS item_quantities', 'item_quantities.item_id = items.item_id');
-            $builder->where('location_id', $filters['stock_location_id']);
+        $builder->join(
+            'inventory AS inventory',
+            $this->buildInventoryJoinCondition($filters),
+            'left'
+        );
+        $builder->join(
+            '(' . $legacyQuantitySql . ') AS item_quantities',
+            'item_quantities.item_id = ' . $itemField('item_id'),
+            'left',
+            false
+        );
+        if ($hasUnitQuantityTables) {
+            $builder->join(
+                '(' . $this->buildUnitQuantitySubquery($businessUnitId) . ') AS unit_quantities',
+                'unit_quantities.item_id = ' . $itemField('item_id'),
+                'left',
+                false
+            );
+        } else {
+            $builder->join(
+                '(SELECT NULL AS item_id, NULL AS retail_quantity, NULL AS large_quantity, NULL AS retail_unit_name, NULL AS large_unit_name) AS unit_quantities',
+                'unit_quantities.item_id = ' . $itemField('item_id'),
+                'left',
+                false
+            );
         }
-
-        $where = empty($config['date_or_time_format'])
-            ? 'DATE_FORMAT(trans_date, "%Y-%m-%d") BETWEEN ' . $this->db->escape($filters['start_date']) . ' AND ' . $this->db->escape($filters['end_date'])
-            : 'trans_date BETWEEN ' . $this->db->escape(rawurldecode($filters['start_date'])) . ' AND ' . $this->db->escape(rawurldecode($filters['end_date']));
-        $builder->where($where);
+        if ($this->db->tableExists('item_barcodes')) {
+            $builder->join('item_barcodes AS item_barcodes', 'item_barcodes.item_id = items.item_id', 'left');
+        }
 
         $attributes_enabled = count($filters['definition_ids']) > 0;
 
@@ -226,6 +270,9 @@ class Item extends Model
                 $builder->orLike('items.item_id', $search);
                 $builder->orLike('company_name', $search);
                 $builder->orLike('items.category', $search);
+                if ($this->db->tableExists('item_barcodes')) {
+                    $builder->orLike('item_barcodes.barcode', $search);
+                }
                 $builder->groupEnd();
             }
         }
@@ -246,7 +293,7 @@ class Item extends Model
             $builder->where('item_number', null);
         }
         if ($filters['low_inventory']) {
-            $builder->where('quantity <=', 'reorder_level');
+            $builder->where($quantityExpression . ' <= items.reorder_level', null, false);
         }
         if ($filters['is_serialized']) {
             $builder->where('is_serialized', 1);
@@ -277,6 +324,68 @@ class Item extends Model
         }
 
         return $builder->get();
+    }
+
+    private function buildInventoryJoinCondition(array $filters): string
+    {
+        $condition = 'inventory.trans_items = items.item_id';
+        if (!empty($filters['start_date']) && !empty($filters['end_date'])) {
+            $config = config(OSPOS::class)->settings;
+            $condition .= empty($config['date_or_time_format'])
+                ? ' AND DATE_FORMAT(inventory.trans_date, "%Y-%m-%d") BETWEEN '
+                    . $this->db->escape($filters['start_date'])
+                    . ' AND '
+                    . $this->db->escape($filters['end_date'])
+                : ' AND inventory.trans_date BETWEEN '
+                    . $this->db->escape(rawurldecode($filters['start_date']))
+                    . ' AND '
+                    . $this->db->escape(rawurldecode($filters['end_date']));
+        }
+
+        return $condition;
+    }
+
+    private function buildLegacyQuantitySubquery(int $stockLocationId): string
+    {
+        $builder = $this->db->table('item_quantities')
+            ->select('item_id')
+            ->select('MAX(location_id) AS location_id')
+            ->select('SUM(quantity) AS quantity');
+
+        if ($stockLocationId > -1) {
+            $builder->where('location_id', $stockLocationId);
+        }
+
+        $builder->groupBy('item_id');
+
+        return $builder->getCompiledSelect();
+    }
+
+    private function buildUnitQuantitySubquery(int $businessUnitId): string
+    {
+        return $this->db->table('item_units AS item_units')
+            ->select('item_units.item_id')
+            ->select("MAX(CASE WHEN item_units.unit_type = 'retail' THEN COALESCE(unit_quantities.quantity, 0) END) AS retail_quantity", false)
+            ->select("MAX(CASE WHEN item_units.unit_type = 'large' THEN COALESCE(unit_quantities.quantity, 0) END) AS large_quantity", false)
+            ->select("MAX(CASE WHEN item_units.unit_type = 'retail' THEN item_units.unit_name END) AS retail_unit_name", false)
+            ->select("MAX(CASE WHEN item_units.unit_type = 'large' THEN item_units.unit_name END) AS large_unit_name", false)
+            ->join(
+                'business_unit_item_unit_quantities AS unit_quantities',
+                'unit_quantities.item_unit_id = item_units.item_unit_id'
+                    . ' AND unit_quantities.business_unit_id = ' . $this->db->escape($businessUnitId),
+                'left'
+            )
+            ->groupBy('item_units.item_id')
+            ->getCompiledSelect();
+    }
+
+    private function getCurrentBusinessUnitId(): ?int
+    {
+        try {
+            return Services::businessUnit()->getCurrentBusinessUnitId();
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
@@ -382,6 +491,22 @@ class Item extends Model
             return $query->getRow();
         }
 
+        if ($this->db->tableExists('item_barcodes')) {
+            $builder = $this->db->table('item_barcodes');
+            $builder->select('items.*');
+            $builder->join('items', 'items.item_id = item_barcodes.item_id');
+            $builder->where('item_barcodes.barcode', $item_id);
+            if (!$include_deleted) {
+                $builder->where('items.deleted', 0);
+            }
+            $builder->limit(1);
+
+            $query = $builder->get();
+            if ($query->getNumRows() == 1) {
+                return $query->getRow();
+            }
+        }
+
         return '';
     }
 
@@ -404,6 +529,22 @@ class Item extends Model
 
         if ($query->getNumRows() == 1) {    // TODO: ===
             return $query->getRow()->item_id;
+        }
+
+        if ($this->db->tableExists('item_barcodes')) {
+            $builder = $this->db->table('item_barcodes');
+            $builder->select('item_barcodes.item_id');
+            $builder->join('items', 'items.item_id = item_barcodes.item_id');
+            $builder->where('item_barcodes.barcode', $item_number);
+
+            if (!$ignore_deleted) {
+                $builder->where('items.deleted', $deleted);
+            }
+
+            $query = $builder->get();
+            if ($query->getNumRows() == 1) {
+                return (int) $query->getRow()->item_id;
+            }
         }
 
         return false;
@@ -670,28 +811,71 @@ class Item extends Model
     public function get_search_suggestions(string $search, array $filters = ['is_deleted' => false, 'search_custom' => false], bool $unique = false, int $limit = 25): array
     {
         $suggestions = [];
+        $suggestedRetailItemIds = [];
         $non_kit = [ITEM, ITEM_AMOUNT_ENTRY];
 
         $builder = $this->db->table('items');
-        $builder->select($this->get_search_suggestion_format('item_id, name, pack_name'));
+        $builder->select('item_id, name, item_number, unit_price, pack_name');
         $builder->where('deleted', $filters['is_deleted']);
         $builder->whereIn('item_type', $non_kit); // Standard, exclude kit items since kits will be picked up later
         $builder->like('name', $search);    // TODO: this and the next 11 lines are duplicated directly below.  We should extract a method here.
         $builder->orderBy('name', 'asc');
 
         foreach ($builder->get()->getResult() as $row) {
-            $suggestions[] = ['value' => $row->item_id, 'label' => $this->get_search_suggestion_label($row)];
+            $suggestedRetailItemIds[(int) $row->item_id] = true;
+            $suggestions[] = $this->buildItemSuggestion($row, $row->item_id);
         }
 
         $builder = $this->db->table('items');
-        $builder->select($this->get_search_suggestion_format('item_id, item_number, pack_name'));
+        $builder->select('item_id, name, item_number, unit_price, pack_name');
         $builder->where('deleted', $filters['is_deleted']);
         $builder->whereIn('item_type', $non_kit); // Standard, exclude kit items since kits will be picked up later
         $builder->like('item_number', $search);
         $builder->orderBy('item_number', 'asc');
 
         foreach ($builder->get()->getResult() as $row) {
-            $suggestions[] = ['value' => $row->item_id, 'label' => $this->get_search_suggestion_label($row)];
+            if (isset($suggestedRetailItemIds[(int) $row->item_id])) {
+                continue;
+            }
+
+            $suggestedRetailItemIds[(int) $row->item_id] = true;
+            $suggestions[] = $this->buildItemSuggestion($row, $row->item_id);
+        }
+
+        if ($this->db->tableExists('item_barcodes')) {
+            $builder = $this->db->table('item_barcodes');
+            $builder->select('items.item_id, items.name, item_barcodes.barcode AS item_number, items.unit_price, items.pack_name');
+            $builder->join('items', 'items.item_id = item_barcodes.item_id');
+            $builder->where('items.deleted', $filters['is_deleted']);
+            $builder->whereIn('items.item_type', $non_kit);
+            $builder->like('item_barcodes.barcode', $search);
+            $builder->orderBy('item_barcodes.barcode', 'asc');
+
+            foreach ($builder->get()->getResult() as $row) {
+                if (isset($suggestedRetailItemIds[(int) $row->item_id])) {
+                    continue;
+                }
+
+                $suggestedRetailItemIds[(int) $row->item_id] = true;
+                $suggestions[] = $this->buildItemSuggestion($row, $row->item_id);
+            }
+        }
+
+        if ($this->db->tableExists('item_units')) {
+            $builder = $this->db->table('item_units');
+            $builder->select('items.item_id, items.name, item_units.item_unit_id, item_units.barcode AS item_number, item_units.unit_price, item_units.unit_name');
+            $builder->join('items', 'items.item_id = item_units.item_id');
+            $builder->where('items.deleted', $filters['is_deleted']);
+            $builder->whereIn('items.item_type', $non_kit);
+            $builder->where('item_units.unit_type', 'large');
+            $builder->where('item_units.barcode IS NOT NULL');
+            $builder->where('item_units.barcode !=', '');
+            $builder->like('item_units.barcode', $search);
+            $builder->orderBy('item_units.barcode', 'asc');
+
+            foreach ($builder->get()->getResult() as $row) {
+                $suggestions[] = $this->buildItemSuggestion($row, $row->item_number, (int) $row->item_unit_id);
+            }
         }
 
         if (!$unique) {
@@ -761,6 +945,34 @@ class Item extends Model
         }
 
         return array_unique($suggestions, SORT_REGULAR);
+    }
+
+    private function buildItemSuggestion(stdClass $row, int|string $value, ?int $itemUnitId = null): array
+    {
+        $price = (float) $row->unit_price;
+        $unitName = trim((string) ($row->unit_name ?? $row->pack_name ?? ''));
+        $barcode = trim((string) $row->item_number);
+        $name = trim((string) $row->name);
+
+        return [
+            'value'           => $value,
+            'label'           => $this->buildItemSuggestionLabel($name, $barcode, $price, $unitName),
+            'name'            => $name,
+            'barcode'         => $barcode,
+            'price'           => $price,
+            'formatted_price' => to_currency_no_money($price),
+            'unit_name'       => $unitName,
+            'item_id'         => (int) $row->item_id,
+            'item_unit_id'    => $itemUnitId,
+        ];
+    }
+
+    private function buildItemSuggestionLabel(?string $name, ?string $barcode, string|float|null $price, ?string $unitName): string
+    {
+        return trim((string) $name)
+            . ' - ' . trim((string) $barcode)
+            . ' - ' . to_currency_no_money((float) $price)
+            . ' - ' . trim((string) $unitName);
     }
 
 
